@@ -1,0 +1,6 @@
+(define x ())
+(print x)
+(set! x 'x)
+(print x)
+(set! x '(x))
+(print x)

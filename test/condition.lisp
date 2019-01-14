@@ -1,0 +1,6 @@
+(define f (lambda (x) (if x (print x) (print 'nil))))
+(define g (lambda (x) (if x (print x))))
+(f 't)
+(f ())
+(g 't)
+(g ())
