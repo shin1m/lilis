@@ -1,6 +1,6 @@
-AC_INIT([slisp], [201901])
+AC_INIT([lilis], [201901])
 AM_INIT_AUTOMAKE([foreign nostdinc dist-bzip2 no-dist-gzip])
-AC_CONFIG_SRCDIR([slisp.cc])
+AC_CONFIG_SRCDIR([lilis.cc])
 
 if test "${CXXFLAGS+set}" != set; then
 	CXXFLAGS=

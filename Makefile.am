@@ -1,4 +1,4 @@
-bin_PROGRAMS = slisp
+bin_PROGRAMS = lilis
 AM_CPPFLAGS =
 AM_CXXFLAGS = -std=c++17
 AM_LDFLAGS =
@@ -12,6 +12,6 @@ if PROFILE
 AM_CXXFLAGS += -pg
 AM_LDFLAGS += -pg
 endif
-slisp_SOURCES = slisp.cc
+lilis_SOURCES = lilis.cc
 
 SUBDIRS = test

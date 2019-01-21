@@ -345,6 +345,10 @@ struct t_code
 		{
 			delete v_code;
 		}
+		void f_register(std::wstring_view a_name, t_binding* a_binding)
+		{
+			v_code->v_bindings.emplace(v_code->v_engine.f_symbol(a_name), a_binding);
+		}
 	};
 
 	t_engine& v_engine;
@@ -361,10 +365,6 @@ struct t_code
 	{
 	}
 	void f_scan(t_engine& a_engine);
-	void f_register(std::wstring_view a_name, t_binding* a_binding)
-	{
-		v_bindings.emplace(v_engine.f_symbol(a_name), a_binding);
-	}
 	t_binding* f_resolve(t_symbol* a_symbol) const
 	{
 		auto i = v_bindings.find(a_symbol);
@@ -982,23 +982,19 @@ struct t_print : t_bindable
 	}
 };
 
-struct t_callcc : t_bindable
+namespace prompt
 {
 	struct t_continuation : t_object_of<t_continuation>
 	{
-		static t_continuation* f_new(t_engine& a_engine)
-		{
-			size_t stack = a_engine.v_used - 2 - a_engine.v_stack.get();
-			size_t contexts = a_engine.v_contexts.get() + t_engine::V_CONTEXTS - a_engine.v_context;
-			return new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_context) * contexts)) t_continuation(a_engine, stack, contexts);
-		}
-
 		size_t v_stack;
 		size_t v_contexts;
 
-		t_continuation(t_engine& a_engine, size_t a_stack, size_t a_contexts) : v_stack(a_stack), v_contexts(a_contexts)
+		t_continuation(t_context* a_context, size_t a_stack, size_t a_contexts) : v_stack(a_stack), v_contexts(a_contexts)
 		{
-			std::copy_n(a_engine.v_context, v_contexts, reinterpret_cast<t_context*>(std::copy_n(a_engine.v_stack.get(), v_stack, reinterpret_cast<t_object**>(this + 1))));
+			auto head = a_context[v_contexts - 1].v_stack;
+			auto contexts = reinterpret_cast<t_context*>(std::copy_n(head, v_stack, reinterpret_cast<t_object**>(this + 1)));
+			std::copy_n(a_context, v_contexts, contexts);
+			for (size_t i = 0; i < v_contexts; ++i) contexts[i].v_stack -= head - static_cast<t_object**>(nullptr);
 		}
 		virtual size_t f_size() const
 		{
@@ -1011,71 +1007,16 @@ struct t_callcc : t_bindable
 			auto q = reinterpret_cast<t_context*>(p);
 			for (size_t i = 0; i < v_contexts; ++i, ++q) q->f_scan(a_engine);
 		}
-		virtual void f_call(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments != 1) throw std::runtime_error("requires an argument");
-			auto value = a_engine.v_used[-1];
-			auto p = reinterpret_cast<t_object**>(this + 1);
-			a_engine.v_used = std::copy_n(p, v_stack, a_engine.v_stack.get());
-			a_engine.v_context = a_engine.v_contexts.get() + t_engine::V_CONTEXTS - v_contexts;
-			std::copy_n(reinterpret_cast<t_context*>(p + v_stack), v_contexts, a_engine.v_context);
-			*a_engine.v_used++ = value;
-		}
-		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-		{
-			f_call(a_engine, a_arguments);
-		}
-	};
-
-	virtual void f_call(t_engine& a_engine, size_t a_arguments)
-	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
-		auto callee = a_engine.f_pointer(a_engine.v_used[-1]);
-		a_engine.v_used[-1] = t_continuation::f_new(a_engine);
-		callee->f_call(a_engine, 1);
-	}
-	virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
-		auto callee = a_engine.f_pointer(a_engine.v_used[-1]);
-		a_engine.v_used = a_engine.v_context->v_stack + 2;
-		++a_engine.v_context;
-		a_engine.v_used[-1] = t_continuation::f_new(a_engine);
-		callee->f_call(a_engine, 1);
-	}
-};
-
-struct t_continuation : t_object_of<t_continuation>
-{
-	struct t_reset : t_bindable
-	{
-		virtual void f_call(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments != 1) throw std::runtime_error("requires an argument");
-			(*--a_engine.v_used)->f_call(a_engine, 0);
-		}
-		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments != 1) throw std::runtime_error("requires an argument");
-			*a_engine.v_context->v_stack = this;
-			(*--a_engine.v_used)->f_tail(a_engine, 0);
-		}
-	};
-	struct t_shift : t_bindable
-	{
 		void f_call(t_engine& a_engine)
 		{
-			auto used = a_engine.v_used -= 2;
-			auto callee = a_engine.f_pointer(used[1]);
-			auto context = a_engine.v_context;
-			while (!dynamic_cast<t_reset*>(*used)) used = context++->v_stack;
-			auto stack = a_engine.v_used - used;
-			auto contexts = context - a_engine.v_context;
-			used[1] = new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_context) * contexts)) t_continuation(a_engine, stack, contexts);
-			used[0] = this;
-			a_engine.v_used = used + 2;
-			a_engine.v_context = context;
-			callee->f_call(a_engine, 1);
+			auto used = a_engine.v_used - 2;
+			auto value = used[1];
+			auto p = reinterpret_cast<t_object**>(this + 1);
+			a_engine.v_used = std::copy_n(p, v_stack, used);
+			a_engine.v_context -= v_contexts;
+			std::copy_n(reinterpret_cast<t_context*>(p + v_stack), v_contexts, a_engine.v_context);
+			for (size_t i = 0; i < v_contexts; ++i) a_engine.v_context[i].v_stack += used - static_cast<t_object**>(nullptr);
+			*a_engine.v_used++ = value;
 		}
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
@@ -1091,53 +1032,69 @@ struct t_continuation : t_object_of<t_continuation>
 			f_call(a_engine);
 		}
 	};
+	struct t_call : t_bindable
+	{
+		static void* v_instructions[];
 
-	size_t v_stack;
-	size_t v_contexts;
-
-	t_continuation(t_engine& a_engine, size_t a_stack, size_t a_contexts) : v_stack(a_stack), v_contexts(a_contexts)
+		void f_call(t_engine& a_engine, size_t a_arguments, bool a_tail)
+		{
+			if (a_arguments != 3) throw std::runtime_error("requires three arguments");
+			if (a_tail) {
+				a_engine.v_used = std::copy_n(a_engine.v_used - 4, 4, a_engine.v_context->v_stack);
+			} else {
+				--a_engine.v_context;
+				a_engine.v_context->v_stack = a_engine.v_used - 4;
+			}
+			a_engine.v_context->v_code = nullptr;
+			a_engine.v_context->v_current = v_instructions;
+			a_engine.v_context->v_scope = nullptr;
+			a_engine.v_used[-1]->f_call(a_engine, 0);
+		}
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
+		{
+			f_call(a_engine, a_arguments, false);
+		}
+		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
+		{
+			f_call(a_engine, a_arguments, true);
+		}
+	};
+	struct t_abort : t_bindable
 	{
-		auto stack = a_engine.v_used - v_stack;
-		auto contexts = reinterpret_cast<t_context*>(std::copy_n(stack, v_stack, reinterpret_cast<t_object**>(this + 1)));
-		std::copy_n(a_engine.v_context, v_contexts, contexts);
-		for (size_t i = 0; i < v_contexts; ++i) contexts[i].v_stack -= stack - static_cast<t_object**>(nullptr);
-	}
-	virtual size_t f_size() const
-	{
-		return sizeof(t_continuation) + sizeof(t_object*) * v_stack + sizeof(t_context) * v_contexts;
-	}
-	virtual void f_scan(t_engine& a_engine)
-	{
-		auto p = reinterpret_cast<t_object**>(this + 1);
-		for (size_t i = 0; i < v_stack; ++i, ++p) *p = a_engine.f_forward(*p);
-		auto q = reinterpret_cast<t_context*>(p);
-		for (size_t i = 0; i < v_contexts; ++i, ++q) q->f_scan(a_engine);
-	}
-	void f_call(t_engine& a_engine)
-	{
-		auto used = a_engine.v_used - 2;
-		auto value = used[1];
-		auto p = reinterpret_cast<t_object**>(this + 1);
-		a_engine.v_used = std::copy_n(p, v_stack, used);
-		a_engine.v_context -= v_contexts;
-		std::copy_n(reinterpret_cast<t_context*>(p + v_stack), v_contexts, a_engine.v_context);
-		for (size_t i = 0; i < v_contexts; ++i) a_engine.v_context[i].v_stack += used - static_cast<t_object**>(nullptr);
-		*a_engine.v_used++ = value;
-	}
-	virtual void f_call(t_engine& a_engine, size_t a_arguments)
-	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
-		f_call(a_engine);
-	}
-	virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
-		a_engine.v_context->v_stack[1] = a_engine.v_used[-1];
-		a_engine.v_used = a_engine.v_context->v_stack + 2;
-		++a_engine.v_context;
-		f_call(a_engine);
-	}
-};
+		void f_abort(t_engine& a_engine, size_t a_arguments)
+		{
+			auto tail = a_engine.v_used - a_arguments - 1;
+			auto context = a_engine.v_context;
+			while (!dynamic_cast<t_call*>(context->v_stack[0]) || context->v_stack[1] != tail[1])
+				if (++context == a_engine.v_contexts.get() + t_engine::V_CONTEXTS)
+					throw std::runtime_error("no matching prompt found");
+			auto head = context->v_stack;
+			auto stack = tail - head;
+			auto contexts = ++context - a_engine.v_context;
+			head[1] = new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_context) * contexts)) t_continuation(a_engine.v_context, stack, contexts);
+			head[0] = this;
+			auto handler = head[2];
+			a_engine.v_used = std::copy(tail + 2, a_engine.v_used, head + 2);
+			a_engine.v_context = context;
+			handler->f_call(a_engine, a_arguments);
+		}
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
+		{
+			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
+			f_abort(a_engine, a_arguments);
+		}
+		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
+		{
+			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
+			a_engine.v_used = std::copy(a_engine.v_used - a_arguments, a_engine.v_used, a_engine.v_context->v_stack + 1);
+			++a_engine.v_context;
+			f_abort(a_engine, a_arguments);
+		}
+	};
+	void* t_call::v_instructions[] = {
+		reinterpret_cast<void*>(e_instruction__RETURN)
+	};
+}
 
 void f_print_with_caret(std::FILE* a_out, const char* a_path, long a_position, size_t a_column)
 {
@@ -1444,18 +1401,17 @@ int main(int argc, char* argv[])
 	}
 	t_engine engine(debug);
 	auto global = engine.f_pointer(engine.f_new<t_code::t_holder>(engine, nullptr));
-	global->v_code->f_register(L"lambda"sv, new t_code::t_lambda());
-	global->v_code->f_register(L"define"sv, new t_define());
-	global->v_code->f_register(L"set!"sv, new t_set());
-	global->v_code->f_register(L"if"sv, new t_if());
-	global->v_code->f_register(L"eq?"sv, new t_eq());
-	global->v_code->f_register(L"cons"sv, new t_cons());
-	global->v_code->f_register(L"car"sv, new t_car());
-	global->v_code->f_register(L"cdr"sv, new t_cdr());
-	global->v_code->f_register(L"print"sv, new t_print());
-	global->v_code->f_register(L"call/cc"sv, new t_callcc());
-	global->v_code->f_register(L"reset"sv, new t_continuation::t_reset());
-	global->v_code->f_register(L"shift"sv, new t_continuation::t_shift());
+	global->f_register(L"lambda"sv, new t_code::t_lambda());
+	global->f_register(L"define"sv, new t_define());
+	global->f_register(L"set!"sv, new t_set());
+	global->f_register(L"if"sv, new t_if());
+	global->f_register(L"eq?"sv, new t_eq());
+	global->f_register(L"cons"sv, new t_cons());
+	global->f_register(L"car"sv, new t_car());
+	global->f_register(L"cdr"sv, new t_cdr());
+	global->f_register(L"print"sv, new t_print());
+	global->f_register(L"call-with-prompt"sv, new prompt::t_call());
+	global->f_register(L"abort-to-prompt"sv, new prompt::t_abort());
 	auto module = engine.f_pointer(engine.f_new<t_code::t_holder>(engine, global));
 	{
 		t_parser parser(engine, argv[1]);

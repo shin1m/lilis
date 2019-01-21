@@ -1,5 +1,5 @@
 TEST_EXTENSIONS = .lisp
-LISP_LOG_COMPILER = $(top_builddir)/slisp
+LISP_LOG_COMPILER = $(top_builddir)/lilis
 AM_LISP_LOG_FLAGS = --debug
 scripts = \
 	hello.lisp \
@@ -7,6 +7,7 @@ scripts = \
 	set.lisp \
 	fibonacci.lisp \
 	hanoi.lisp \
+	prompt.lisp \
 	shiftreset.lisp \
 	tailyield.lisp \
 	yield.lisp \
