@@ -11,6 +11,9 @@
 #include <cstring>
 #include <cwctype>
 
+namespace lilis
+{
+
 using namespace std::literals;
 
 struct t_engine;
@@ -249,7 +252,7 @@ struct t_pair : t_object_of<t_pair>
 	{
 		std::wstring s = L"(";
 		for (auto p = this;;) {
-			s += ::f_string(p->v_head);
+			s += lilis::f_string(p->v_head);
 			if (!p->v_tail) break;
 			auto tail = dynamic_cast<t_pair*>(p->v_tail);
 			if (!tail) {
@@ -312,7 +315,8 @@ enum t_instruction
 	e_instruction__RETURN,
 	e_instruction__LAMBDA,
 	e_instruction__JUMP,
-	e_instruction__BRANCH
+	e_instruction__BRANCH,
+	e_instruction__END
 };
 
 struct t_code
@@ -397,7 +401,7 @@ inline void t_code::f_call(t_scope* a_outer, size_t a_arguments, bool a_tail)
 	if (a_arguments != v_arguments) throw std::runtime_error("wrong number of arguments");
 	auto scope = v_engine.f_pointer(a_outer);
 	auto p = v_engine.f_allocate(sizeof(t_scope) + sizeof(t_object) * v_locals.size());
-	v_engine.v_used -= a_arguments;
+	v_engine.v_used -= v_arguments;
 	scope = new(p) t_scope(scope, v_locals.size(), v_engine.v_used, v_arguments);
 	if (!a_tail) {
 		if (v_engine.v_context <= v_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
@@ -631,9 +635,11 @@ t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 void t_engine::f_run(t_code* a_code)
 {
 	auto top = --v_context;
-	top->v_code = a_code->v_outer;
+	top->v_code = nullptr;
+	auto end = reinterpret_cast<void*>(e_instruction__END);
+	top->v_current = &end;
 	top->v_scope = nullptr;
-	top->v_stack = v_used;
+	top->v_stack = v_used = v_stack.get();
 	*v_used++ = nullptr;
 	a_code->f_call(nullptr, 0, false);
 	while (true) {
@@ -681,16 +687,15 @@ void t_engine::f_run(t_code* a_code)
 				auto callee = v_used[-1 - arguments];
 				if (!callee) throw std::runtime_error("applying to nil");
 				callee->f_tail(*this, arguments);
-				if (v_context == top) return;
 			}
 			break;
 		case e_instruction__RETURN:
 			*v_context->v_stack = v_used[-1];
 			v_used = v_context->v_stack + 1;
-			if (++v_context == top) return;
+			++v_context;
 			break;
 		case e_instruction__LAMBDA:
-			*v_used++ = f_new<::t_lambda>(*reinterpret_cast<t_code::t_holder**>(++v_context->v_current), v_context->v_scope);
+			*v_used++ = f_new<lilis::t_lambda>(*reinterpret_cast<t_code::t_holder**>(++v_context->v_current), v_context->v_scope);
 			++v_context->v_current;
 			break;
 		case e_instruction__JUMP:
@@ -703,6 +708,8 @@ void t_engine::f_run(t_code* a_code)
 			else
 				v_context->v_current = static_cast<void**>(*v_context->v_current);
 			break;
+		case e_instruction__END:
+			return;
 		}
 	}
 }
@@ -830,7 +837,7 @@ struct t_quote : t_object_of<t_quote>
 	}
 	virtual std::wstring f_string() const
 	{
-		return L'\'' + ::f_string(v_value);
+		return L'\'' + lilis::f_string(v_value);
 	}
 	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code)
 	{
@@ -973,7 +980,7 @@ struct t_print : t_bindable
 		a_engine.v_used -= a_arguments;
 		if (a_arguments > 0)
 			for (size_t i = 0;;) {
-				std::wprintf(L"%ls", ::f_string(a_engine.v_used[i]).c_str());
+				std::wprintf(L"%ls", lilis::f_string(a_engine.v_used[i]).c_str());
 				if (++i >= a_arguments) break;
 				std::putwchar(L' ');
 			}
@@ -1379,6 +1386,8 @@ t_object* t_parser::f_expression()
 	}
 }
 
+}
+
 int main(int argc, char* argv[])
 {
 	auto debug = false;
@@ -1395,10 +1404,7 @@ int main(int argc, char* argv[])
 		}
 		argc = q - argv;
 	}
-	if (argc < 2) {
-		std::fprintf(stderr, "usage: %s [options] <script> ...\n", argv[0]);
-		return -1;
-	}
+	using namespace lilis;
 	t_engine engine(debug);
 	auto global = engine.f_pointer(engine.f_new<t_code::t_holder>(engine, nullptr));
 	global->f_register(L"lambda"sv, new t_code::t_lambda());
@@ -1413,10 +1419,20 @@ int main(int argc, char* argv[])
 	global->f_register(L"call-with-prompt"sv, new prompt::t_call());
 	global->f_register(L"abort-to-prompt"sv, new prompt::t_abort());
 	auto module = engine.f_pointer(engine.f_new<t_code::t_holder>(engine, global));
-	{
-		t_parser parser(engine, argv[1]);
-		module->v_code->f_apply(engine.f_new<t_pair>(nullptr, engine.f_pointer<t_object>(parser.f_parse())));
+	if (argc < 2) {
+		std::fprintf(stderr, "usage: %s [options] <script> ...\n", argv[0]);
+		return -1;
+	} else {
+		try {
+			{
+				t_parser parser(engine, argv[1]);
+				module->v_code->f_apply(engine.f_new<t_pair>(nullptr, engine.f_pointer<t_object>(parser.f_parse())));
+			}
+			engine.f_run(module->v_code);
+			return 0;
+		} catch (std::exception& e) {
+			std::fprintf(stderr, "caught: %s\n", e.what());
+			return -1;
+		}
 	}
-	engine.f_run(module->v_code);
-	return 0;
 }
