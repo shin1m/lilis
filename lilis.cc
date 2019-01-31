@@ -131,8 +131,9 @@ struct t_engine : t_root
 	t_context* v_context;
 	std::map<std::wstring, t_symbol*, std::less<>> v_symbols;
 	bool v_debug;
+	bool v_verbose;
 
-	t_engine(bool a_debug);
+	t_engine(bool a_debug, bool a_verbose);
 	t_object* f_move(t_object* a_p)
 	{
 		size_t n = a_p->f_size();
@@ -152,7 +153,7 @@ struct t_engine : t_root
 		auto p = v_head;
 		v_head += a_n;
 		if (v_head > v_tail || v_debug) {
-std::fprintf(stderr, "gc collecting...\n");
+			if (v_verbose) std::fprintf(stderr, "gc collecting...\n");
 			v_heap0.swap(v_heap1);
 			v_head = v_tail = v_heap0.get();
 			{
@@ -170,7 +171,7 @@ std::fprintf(stderr, "gc collecting...\n");
 				p->f_destruct(*this);
 			}
 			v_tail = v_heap0.get() + V_HEAP;
-std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
+			if (v_verbose) std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
 			p = v_head;
 			v_head += a_n;
 			if (v_head > v_tail) throw std::runtime_error("out of memory");
@@ -504,7 +505,7 @@ struct t_context
 	}
 };
 
-inline t_engine::t_engine(bool a_debug) : v_contexts(new t_context[V_CONTEXTS]), v_context(v_contexts.get() + V_CONTEXTS), v_debug(a_debug)
+inline t_engine::t_engine(bool a_debug, bool a_verbose) : v_contexts(new t_context[V_CONTEXTS]), v_context(v_contexts.get() + V_CONTEXTS), v_debug(a_debug), v_verbose(a_verbose)
 {
 }
 
@@ -1497,13 +1498,17 @@ t_object* t_parser::f_expression()
 int main(int argc, char* argv[])
 {
 	auto debug = false;
+	auto verbose = false;
 	{
 		auto end = argv + argc;
 		auto q = argv;
 		for (auto p = argv; p < end; ++p) {
 			if ((*p)[0] == '-' && (*p)[1] == '-') {
 				const auto v = *p + 2;
-				if (std::strcmp(v, "debug") == 0) debug = true;
+				if (std::strcmp(v, "debug") == 0)
+					debug = true;
+				else if (std::strcmp(v, "verbose") == 0)
+					verbose = true;
 			} else {
 				*q++ = *p;
 			}
@@ -1511,7 +1516,7 @@ int main(int argc, char* argv[])
 		argc = q - argv;
 	}
 	using namespace lilis;
-	t_engine engine(debug);
+	t_engine engine(debug, verbose);
 	auto global = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine));
 	(*global)->f_register(L"lambda"sv, new t_code::t_lambda());
 	(*global)->f_register(L"define"sv, new t_define());
