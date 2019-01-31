@@ -17,8 +17,9 @@ namespace lilis
 using namespace std::literals;
 
 struct t_engine;
-struct t_symbol;
 struct t_context;
+struct t_symbol;
+struct t_scope;
 struct t_code;
 namespace ast
 {
@@ -189,7 +190,7 @@ std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
 	}
 	virtual void f_scan(t_engine& a_engine);
 	t_symbol* f_symbol(std::wstring_view a_name);
-	void f_run(t_code* a_code);
+	t_scope* f_run(t_code* a_code);
 };
 
 template<typename T>
@@ -324,13 +325,13 @@ struct t_binding
 	virtual void f_scan(t_engine& a_engine)
 	{
 	}
-	virtual std::function<std::unique_ptr<ast::t_node>()> f_bind(t_code* a_code, t_object* a_arguments)
-	{
-		return {};
-	}
 	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
 	{
 		throw std::runtime_error("cannot generate");
+	}
+	virtual std::unique_ptr<t_binding> f_export(t_scope* a_scope)
+	{
+		throw std::runtime_error("cannot export");
 	}
 };
 
@@ -352,8 +353,55 @@ struct t_bindings : std::map<t_symbol*, std::unique_ptr<t_binding>>
 	}
 };
 
+struct t_setter
+{
+	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression) = 0;
+};
+
 struct t_module : t_bindings
 {
+	struct t_variable : t_binding, t_setter
+	{
+		t_object* v_value;
+
+		t_variable(t_object* a_value) : v_value(a_value)
+		{
+		}
+		virtual void f_scan(t_engine& a_engine)
+		{
+			v_value = a_engine.f_forward(v_value);
+		}
+		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer);
+		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression);
+	};
+	struct t_get : t_object_of<t_get>
+	{
+		t_variable* v_variable;
+
+		t_get(t_variable* a_variable) : v_variable(a_variable)
+		{
+		}
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
+		{
+			if (a_arguments != 0) throw std::runtime_error("requires no argument");
+			a_engine.v_used[-1] = v_variable->v_value;
+		}
+	};
+	struct t_set : t_object_of<t_set>
+	{
+		t_variable* v_variable;
+
+		t_set(t_variable* a_variable) : v_variable(a_variable)
+		{
+		}
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
+		{
+			if (a_arguments != 1) throw std::runtime_error("requires an argument");
+			--a_engine.v_used;
+			a_engine.v_used[-1] = v_variable->v_value = a_engine.v_used[0];
+		}
+	};
+
 	t_engine& v_engine;
 
 	t_module(t_engine& a_engine, t_holder<t_module>* a_this) : v_engine(a_engine)
@@ -384,9 +432,9 @@ enum t_instruction
 	e_instruction__END
 };
 
-struct t_variable : t_binding
+struct t_binder
 {
-	virtual std::unique_ptr<ast::t_node> f_generate_set(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression) = 0;
+	virtual std::unique_ptr<ast::t_node> f_bind(t_code* a_code, t_object* a_arguments) = 0;
 };
 
 struct t_code
@@ -395,7 +443,7 @@ struct t_code
 	{
 		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer);
 	};
-	struct t_local : t_variable
+	struct t_local : t_binding, t_setter
 	{
 		size_t v_index;
 
@@ -403,12 +451,17 @@ struct t_code
 		{
 		}
 		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer);
-		virtual std::unique_ptr<ast::t_node> f_generate_set(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression);
+		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression);
+		virtual std::unique_ptr<t_binding> f_export(t_scope* a_scope)
+		{
+			return std::make_unique<t_module::t_variable>(a_scope->f_locals()[v_index]);
+		}
 	};
 
 	t_engine& v_engine;
 	t_holder<t_code>* v_this;
 	t_holder<t_code>* v_outer;
+	t_holder<t_module>* v_module;
 	std::vector<t_holder<t_module>*> v_imports;
 	std::vector<t_symbol*> v_locals;
 	size_t v_arguments;
@@ -417,7 +470,7 @@ struct t_code
 	std::vector<size_t> v_objects;
 	size_t v_stack = 1;
 
-	t_code(t_engine& a_engine, t_holder<t_code>* a_this, t_holder<t_code>* a_outer) : v_engine(a_engine), v_this(a_this), v_outer(a_outer)
+	t_code(t_engine& a_engine, t_holder<t_code>* a_this, t_holder<t_code>* a_outer, t_holder<t_module>* a_module) : v_engine(a_engine), v_this(a_this), v_outer(a_outer), v_module(a_module)
 	{
 	}
 	void f_scan();
@@ -433,7 +486,7 @@ struct t_code
 		}
 		throw std::runtime_error("not found");
 	}
-	void f_apply(t_object* a_arguments);
+	void f_compile(t_object* a_source);
 	void f_call(t_scope* a_outer, size_t a_arguments, bool a_tail);
 };
 
@@ -575,8 +628,8 @@ struct t_lambda : t_node
 		delete this;
 		auto& engine = a_code->v_engine;
 		auto arguments = engine.f_pointer(a_arguments);
-		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this));
-		(*code)->f_apply(arguments);
+		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
+		(*code)->f_compile(arguments);
 		return std::make_unique<t_node>(code);
 	}
 };
@@ -691,7 +744,7 @@ t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 	return i->second;
 }
 
-void t_engine::f_run(t_code* a_code)
+t_scope* t_engine::f_run(t_code* a_code)
 {
 	auto top = --v_context;
 	top->v_code = nullptr;
@@ -701,6 +754,7 @@ void t_engine::f_run(t_code* a_code)
 	top->v_stack = v_used = v_stack.get();
 	*v_used++ = nullptr;
 	a_code->f_call(nullptr, 0, false);
+	auto scope = f_pointer(v_context->v_scope);
 	while (true) {
 		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_context->v_current))) {
 		case e_instruction__POP:
@@ -768,7 +822,7 @@ void t_engine::f_run(t_code* a_code)
 				v_context->v_current = static_cast<void**>(*v_context->v_current);
 			break;
 		case e_instruction__END:
-			return;
+			return scope;
 		}
 	}
 }
@@ -798,6 +852,18 @@ std::unique_ptr<ast::t_node> t_pair::f_generate(t_code* a_code)
 	return ast::f_generate(v_head, a_code).release()->f_apply(a_code, tail);
 }
 
+std::unique_ptr<ast::t_node> t_module::t_variable::f_generate(t_code* a_code, size_t a_outer)
+{
+	return std::make_unique<ast::t_call>(std::make_unique<ast::t_quote>(a_code->v_engine, a_code->v_engine.f_new<t_get>(this)));
+}
+
+std::unique_ptr<ast::t_node> t_module::t_variable::f_generate(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression)
+{
+	auto p = std::make_unique<ast::t_call>(std::make_unique<ast::t_quote>(a_code->v_engine, a_code->v_engine.f_new<t_set>(this)));
+	p->v_arguments.push_back(std::move(a_expression));
+	return std::move(p);
+}
+
 std::unique_ptr<ast::t_node> t_code::t_lambda::f_generate(t_code* a_code, size_t a_outer)
 {
 	return std::make_unique<ast::t_lambda>();
@@ -808,7 +874,7 @@ std::unique_ptr<ast::t_node> t_code::t_local::f_generate(t_code* a_code, size_t 
 	return std::make_unique<ast::t_get>(a_outer, v_index);
 }
 
-std::unique_ptr<ast::t_node> t_code::t_local::f_generate_set(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression)
+std::unique_ptr<ast::t_node> t_code::t_local::f_generate(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression)
 {
 	return std::make_unique<ast::t_set>(a_outer, v_index, std::move(a_expression));
 }
@@ -817,48 +883,55 @@ void t_code::f_scan()
 {
 	v_this = v_engine.f_forward(v_this);
 	v_outer = v_engine.f_forward(v_outer);
+	v_module = v_engine.f_forward(v_module);
 	for (auto& x : v_imports) x = v_engine.f_forward(x);
 	for (auto& x : v_locals) x = v_engine.f_forward(x);
 	v_bindings.f_scan(v_engine);
 	for (auto i : v_objects) v_instructions[i] = v_engine.f_forward(static_cast<t_object*>(v_instructions[i]));
 }
 
-void t_code::f_apply(t_object* a_arguments)
+void t_code::f_compile(t_object* a_source)
 {
-	auto pair = v_engine.f_pointer(require_cast<t_pair>(a_arguments, "must be list"));
-	for (auto arguments = pair->v_head; arguments;) {
-		auto p = require_cast<t_pair>(arguments, "must be list");
-		auto symbol = require_cast<t_symbol>(p->v_head, "must be symbol");
-		v_bindings.emplace(symbol, new t_local(v_locals.size()));
-		v_locals.push_back(symbol);
-		arguments = p->v_tail;
+	if (v_outer) {
+		auto pair = require_cast<t_pair>(static_cast<t_object*>(a_source), "must be list");
+		for (auto arguments = pair->v_head; arguments;) {
+			auto p = require_cast<t_pair>(arguments, "must be list");
+			auto symbol = require_cast<t_symbol>(p->v_head, "must be symbol");
+			v_bindings.emplace(symbol, new t_local(v_locals.size()));
+			v_locals.push_back(symbol);
+			arguments = p->v_tail;
+		}
+		a_source = pair->v_tail;
 	}
-	auto arguments = v_engine.f_pointer(pair->v_tail);
 	v_arguments = v_locals.size();
+	auto body = v_engine.f_pointer(a_source);
 	ast::t_emit emit{this};
-	while (arguments) {
-		pair = dynamic_cast<t_pair*>(static_cast<t_object*>(arguments));
+	while (body) {
+		auto pair = dynamic_cast<t_pair*>(static_cast<t_object*>(body));
 		if (!pair) break;
 		auto p = dynamic_cast<t_pair*>(pair->v_head);
 		if (!p) break;
 		auto symbol = dynamic_cast<t_symbol*>(p->v_head);
 		if (!symbol) break;
-		auto [outer, binding] = f_resolve(symbol);
-		if (!binding) break;
-		auto binder = binding->f_bind(this, p->v_tail);
+		auto binder = dynamic_cast<t_binder*>(f_resolve(symbol).second);
 		if (!binder) break;
-		binder()->f_emit(emit, 1, false);
-		emit(e_instruction__POP, 1);
-		arguments = pair->v_tail;
-	}
-	while (true) {
-		pair = require_cast<t_pair>(static_cast<t_object*>(arguments), "must have an expression");
-		arguments = pair->v_tail;
-		ast::f_generate(pair->v_head, this)->f_emit(emit, 1, !arguments);
-		if (!arguments) break;
+		body = pair->v_tail;
+		binder->f_bind(this, p->v_tail)->f_emit(emit, 1, false);
 		emit(e_instruction__POP, 1);
 	}
-	emit(e_instruction__RETURN, 0)(size_t(1));
+	if (body) {
+		while (true) {
+			auto pair = require_cast<t_pair>(static_cast<t_object*>(body), "must be list");
+			body = pair->v_tail;
+			ast::f_generate(pair->v_head, this)->f_emit(emit, 1, !body);
+			if (!body) break;
+			emit(e_instruction__POP, 1);
+		}
+	} else {
+		if (v_outer) throw std::runtime_error("must have an expression");
+		emit(e_instruction__INSTANCE, 1)(static_cast<t_object*>(nullptr));
+	}
+	emit(e_instruction__RETURN, 0);
 	for (auto& x : emit.v_labels) {
 		auto p = v_instructions.data() + x.v_target;
 		for (auto i : x) v_instructions[i] = p;
@@ -898,9 +971,9 @@ struct t_quote : t_object_of<t_quote>
 	}
 };
 
-struct t_define : t_binding
+struct t_define : t_binding, t_binder
 {
-	virtual std::function<std::unique_ptr<ast::t_node>()> f_bind(t_code* a_code, t_object* a_arguments)
+	virtual std::unique_ptr<ast::t_node> f_bind(t_code* a_code, t_object* a_arguments)
 	{
 		auto pair = require_cast<t_pair>(a_arguments, "must be list");
 		auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
@@ -909,12 +982,7 @@ struct t_define : t_binding
 		size_t index = a_code->v_locals.size();
 		a_code->v_locals.push_back(symbol);
 		a_code->v_bindings.emplace(symbol, new t_code::t_local(index));
-		return [a_code, index, expression = new t_pointer<t_object>(a_code->v_engine, pair->v_head)]()
-		{
-			auto node = ast::f_generate(*expression, a_code);
-			delete expression;
-			return std::make_unique<ast::t_set>(0, index, std::move(node));
-		};
+		return std::make_unique<ast::t_set>(0, index, ast::f_generate(pair->v_head, a_code));
 	}
 };
 
@@ -930,8 +998,8 @@ struct t_set : t_binding
 			pair = require_cast<t_pair>(pair->v_tail, "must be list");
 			if (pair->v_tail) throw std::runtime_error("must have an expression");
 			auto [outer, binding] = a_code->f_resolve(symbol);
-			if (auto p = dynamic_cast<t_variable*>(binding)) return p->f_generate_set(a_code, outer, ast::f_generate(pair->v_head, a_code));
-			throw std::runtime_error("not variable");
+			if (auto p = dynamic_cast<t_setter*>(binding)) return p->f_generate(a_code, outer, ast::f_generate(pair->v_head, a_code));
+			throw std::runtime_error("not setter");
 		}
 	};
 
@@ -1025,11 +1093,11 @@ struct t_print : t_bindable
 		a_engine.v_used -= a_arguments;
 		if (a_arguments > 0)
 			for (size_t i = 0;;) {
-				std::wprintf(L"%ls", lilis::f_string(a_engine.v_used[i]).c_str());
+				std::printf("%ls", lilis::f_string(a_engine.v_used[i]).c_str());
 				if (++i >= a_arguments) break;
-				std::putwchar(L' ');
+				std::putchar(' ');
 			}
-		std::putwchar(L'\n');
+		std::putchar('\n');
 		a_engine.v_used[-1] = nullptr;
 	}
 };
@@ -1181,22 +1249,20 @@ struct t_parser
 {
 	struct t_error : std::runtime_error
 	{
-		std::string v_path;
 		const t_at v_at;
 
-		t_error(t_parser& a_parser) : std::runtime_error("lexical error"), v_path(a_parser.v_path), v_at(a_parser.v_at)
+		t_error(t_parser& a_parser) : std::runtime_error("lexical error"), v_at(a_parser.v_at)
 		{
 		}
-		void f_dump() const
+		void f_dump(const char* a_path) const
 		{
-			std::fprintf(stderr, "at %ls:%" PRIuPTR ":%" PRIuPTR "\n", v_path.c_str(), static_cast<uintptr_t>(v_at.v_line), static_cast<uintptr_t>(v_at.v_column));
-			f_print_with_caret(stderr, v_path.c_str(), v_at.v_position, v_at.v_column);
+			std::fprintf(stderr, "at %ls:%" PRIuPTR ":%" PRIuPTR "\n", a_path, static_cast<uintptr_t>(v_at.v_line), static_cast<uintptr_t>(v_at.v_column));
+			f_print_with_caret(stderr, a_path, v_at.v_position, v_at.v_column);
 		}
 	};
 
 	t_engine& v_engine;
-	const char* v_path;
-	std::FILE* v_stream;
+	std::function<wint_t()> v_get;
 	long v_p = 0;
 	long v_position = 0;
 	size_t v_line = 1;
@@ -1216,7 +1282,7 @@ struct t_parser
 		default:
 			++v_column;
 		}
-		v_c = std::getwc(v_stream);
+		v_c = v_get();
 	}
 	void f_skip()
 	{
@@ -1258,15 +1324,10 @@ struct t_parser
 		return head;
 	}
 
-	t_parser(t_engine& a_engine, const char* a_path) : v_engine(a_engine), v_path(a_path), v_stream(std::fopen(a_path, "r"))
+	t_parser(t_engine& a_engine, std::function<wint_t()>&& a_get) : v_engine(a_engine), v_get(std::move(a_get))
 	{
-		if (v_stream == NULL) throw std::runtime_error("cannot open");
-		v_c = std::getwc(v_stream);
+		v_c = v_get();
 		f_skip();
-	}
-	~t_parser()
-	{
-		if (v_stream != NULL) std::fclose(v_stream);
 	}
 	t_pair* f_parse()
 	{
@@ -1463,22 +1524,56 @@ int main(int argc, char* argv[])
 	(*global)->f_register(L"print"sv, new t_print());
 	(*global)->f_register(L"call-with-prompt"sv, new prompt::t_call());
 	(*global)->f_register(L"abort-to-prompt"sv, new prompt::t_abort());
+	auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine));
 	if (argc < 2) {
-		std::fprintf(stderr, "usage: %s [options] <script> ...\n", argv[0]);
-		return -1;
-	} else {
-		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr));
-		(*code)->v_imports.push_back(global);
-		try {
-			{
-				t_parser parser(engine, argv[1]);
-				(*code)->f_apply(engine.f_new<t_pair>(nullptr, engine.f_pointer<t_object>(parser.f_parse())));
+		while (true) {
+			std::fputs("> ", stdout);
+			std::vector<wint_t> cs;
+			auto c = std::getwchar();
+			while (c != WEOF && c != L'\n') {
+				cs.push_back(c);
+				c = std::getwchar();
 			}
+			if (!cs.empty()) {
+				cs.push_back(WEOF);
+				try {
+					auto expressions = engine.f_pointer(t_parser(engine, [i = cs.begin()]() mutable
+					{
+						return *i++;
+					}).f_parse());
+					if (expressions) {
+						auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
+						(*code)->v_imports.push_back(global);
+						(*code)->v_imports.push_back(module);
+						(*code)->f_compile(expressions);
+						auto scope = engine.f_pointer(engine.f_run(*code));
+						for (auto& x : (*code)->v_bindings) (*module)->insert_or_assign(x.first, x.second->f_export(scope));
+						std::printf("%ls\n", f_string(engine.v_used[0]).c_str());
+					}
+				} catch (std::exception& e) {
+					std::fprintf(stderr, "caught: %s\n", e.what());
+				}
+			}
+			if (c == WEOF) break;
+		}
+	} else {
+		try {
+			auto expressions = engine.f_pointer<t_pair>(nullptr);
+			{
+				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(argv[1], "r"), &std::fclose);
+				expressions = t_parser(engine, [&]
+				{
+					return std::getwc(file.get());
+				}).f_parse();
+			}
+			auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
+			(*code)->v_imports.push_back(global);
+			(*code)->f_compile(expressions);
 			engine.f_run(*code);
-			return 0;
 		} catch (std::exception& e) {
 			std::fprintf(stderr, "caught: %s\n", e.what());
 			return -1;
 		}
 	}
+	return 0;
 }
