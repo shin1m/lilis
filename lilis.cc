@@ -117,14 +117,14 @@ struct t_engine : t_root
 		}
 	};
 
-	static constexpr size_t V_HEAP = 1024 * 16;
 	static constexpr size_t V_STACK = 1024;
 	static constexpr size_t V_CONTEXTS = 256;
 
-	std::unique_ptr<char[]> v_heap0{new char[V_HEAP]};
-	std::unique_ptr<char[]> v_heap1{new char[V_HEAP]};
+	size_t v_size = 1024;
+	std::unique_ptr<char[]> v_heap0{new char[v_size]};
+	std::unique_ptr<char[]> v_heap1{new char[v_size]};
 	char* v_head = v_heap0.get();
-	char* v_tail = v_head + V_HEAP;
+	char* v_tail = v_head + v_size;
 	std::unique_ptr<t_object*[]> v_stack{new t_object*[V_STACK]};
 	std::unique_ptr<t_context[]> v_contexts;
 	t_object** v_used = v_stack.get();
@@ -147,6 +147,21 @@ struct t_engine : t_root
 	{
 		return a_value ? static_cast<T*>(a_value->f_forward(*this)) : nullptr;
 	}
+	void f_compact()
+	{
+		v_heap0.swap(v_heap1);
+		v_head = v_tail = v_heap0.get();
+		{
+			t_root* p = this;
+			do p->f_scan(*this); while ((p = p->v_next) != this);
+		}
+		while (v_head != v_tail) {
+			auto p = reinterpret_cast<t_object*>(v_head);
+			v_head += p->f_size();
+			p->f_scan(*this);
+		}
+		v_tail = v_heap0.get() + v_size;
+	}
 	char* f_allocate(size_t a_n)
 	{
 		if (a_n < sizeof(t_forward)) a_n = sizeof(t_forward);
@@ -154,27 +169,24 @@ struct t_engine : t_root
 		v_head += a_n;
 		if (v_head > v_tail || v_debug) {
 			if (v_verbose) std::fprintf(stderr, "gc collecting...\n");
-			v_heap0.swap(v_heap1);
-			v_head = v_tail = v_heap0.get();
-			{
-				t_root* p = this;
-				do p->f_scan(*this); while ((p = p->v_next) != this);
-			}
-			while (v_head != v_tail) {
-				auto p = reinterpret_cast<t_object*>(v_head);
-				v_head += p->f_size();
-				p->f_scan(*this);
-			}
+			f_compact();
 			for (auto q = v_heap1.get(); q != p;) {
 				auto p = reinterpret_cast<t_object*>(q);
 				q += p->f_size();
 				p->f_destruct(*this);
 			}
-			v_tail = v_heap0.get() + V_HEAP;
 			if (v_verbose) std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
-			p = v_head;
-			v_head += a_n;
-			if (v_head > v_tail) throw std::runtime_error("out of memory");
+			while (true) {
+				p = v_head;
+				v_head += a_n;
+				if (v_head <= v_tail) break;
+				if (v_verbose) std::fprintf(stderr, "gc expanding...\n");
+				v_size *= 2;
+				v_heap1.reset(new char[v_size]);
+				f_compact();
+				v_heap1.reset(new char[v_size]);
+				if (v_verbose) std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
+			}
 		}
 		return p;
 	}
