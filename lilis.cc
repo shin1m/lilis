@@ -44,7 +44,6 @@ struct t_object
 	{
 		throw std::runtime_error("not callable");
 	}
-	virtual void f_tail(t_engine& a_engine, size_t a_arguments);
 	virtual std::wstring f_string() const
 	{
 		return L"#object";
@@ -500,7 +499,7 @@ struct t_code
 		throw std::runtime_error("not found");
 	}
 	void f_compile(t_object* a_source);
-	void f_call(t_scope* a_outer, size_t a_arguments, bool a_tail);
+	void f_call(t_scope* a_outer, size_t a_arguments);
 };
 
 struct t_context
@@ -521,18 +520,16 @@ inline t_engine::t_engine(bool a_debug, bool a_verbose) : v_contexts(new t_conte
 {
 }
 
-inline void t_code::f_call(t_scope* a_outer, size_t a_arguments, bool a_tail)
+inline void t_code::f_call(t_scope* a_outer, size_t a_arguments)
 {
 	if (a_arguments != v_arguments) throw std::runtime_error("wrong number of arguments");
 	auto scope = v_engine.f_pointer(a_outer);
 	auto p = v_engine.f_allocate(sizeof(t_scope) + sizeof(t_object) * v_locals.size());
 	v_engine.v_used -= v_arguments;
 	scope = new(p) t_scope(scope, v_locals.size(), v_engine.v_used, v_arguments);
-	if (!a_tail) {
-		if (v_engine.v_context <= v_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
-		--v_engine.v_context;
-		v_engine.v_context->v_stack = --v_engine.v_used;
-	}
+	if (v_engine.v_context <= v_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
+	--v_engine.v_context;
+	v_engine.v_context->v_stack = --v_engine.v_used;
 	if (v_engine.v_context->v_stack + v_stack > v_engine.v_stack.get() + t_engine::V_STACK) throw std::runtime_error("stack overflow");
 	v_engine.v_used = v_engine.v_context->v_stack + 1;
 	v_engine.v_context->v_code = v_this;
@@ -555,11 +552,7 @@ struct t_lambda : t_object_of<t_lambda>
 	}
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		(*v_code)->f_call(v_scope, a_arguments, false);
-	}
-	virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-	{
-		(*v_code)->f_call(v_scope, a_arguments, true);
+		(*v_code)->f_call(v_scope, a_arguments);
 	}
 };
 
@@ -766,7 +759,7 @@ t_scope* t_engine::f_run(t_code* a_code)
 	top->v_scope = nullptr;
 	top->v_stack = v_used = v_stack.get();
 	*v_used++ = nullptr;
-	a_code->f_call(nullptr, 0, false);
+	a_code->f_call(nullptr, 0);
 	auto scope = f_pointer(v_context->v_scope);
 	while (true) {
 		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_context->v_current))) {
@@ -803,16 +796,17 @@ t_scope* t_engine::f_run(t_code* a_code)
 				auto arguments = reinterpret_cast<size_t>(*++v_context->v_current);
 				++v_context->v_current;
 				auto callee = v_used[-1 - arguments];
-				if (!callee) throw std::runtime_error("applying to nil");
+				if (!callee) throw std::runtime_error("calling nil");
 				callee->f_call(*this, arguments);
 			}
 			break;
 		case e_instruction__CALL_TAIL:
 			{
 				auto arguments = reinterpret_cast<size_t>(*++v_context->v_current);
-				auto callee = v_used[-1 - arguments];
-				if (!callee) throw std::runtime_error("applying to nil");
-				callee->f_tail(*this, arguments);
+				v_used = std::copy(v_used - arguments - 1, v_used, v_context->v_stack);
+				auto callee = *v_context++->v_stack;
+				if (!callee) throw std::runtime_error("calling nil");
+				callee->f_call(*this, arguments);
 			}
 			break;
 		case e_instruction__RETURN:
@@ -843,14 +837,6 @@ t_scope* t_engine::f_run(t_code* a_code)
 std::unique_ptr<ast::t_node> t_object::f_generate(t_code* a_code)
 {
 	return std::make_unique<ast::t_quote>(a_code->v_engine, this);
-}
-
-void t_object::f_tail(t_engine& a_engine, size_t a_arguments)
-{
-	f_call(a_engine, a_arguments);
-	*a_engine.v_context->v_stack = a_engine.v_used[-1];
-	a_engine.v_used = a_engine.v_context->v_stack + 1;
-	++a_engine.v_context;
 }
 
 std::unique_ptr<ast::t_node> t_symbol::f_generate(t_code* a_code)
@@ -1140,8 +1126,9 @@ namespace prompt
 			auto q = reinterpret_cast<t_context*>(p);
 			for (size_t i = 0; i < v_contexts; ++i, ++q) q->f_scan(a_engine);
 		}
-		void f_call(t_engine& a_engine)
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
+			if (a_arguments != 1) throw std::runtime_error("requires an argument");
 			auto used = a_engine.v_used - 2;
 			auto value = used[1];
 			auto p = reinterpret_cast<t_object**>(this + 1);
@@ -1151,51 +1138,28 @@ namespace prompt
 			for (size_t i = 0; i < v_contexts; ++i) a_engine.v_context[i].v_stack += used - static_cast<t_object**>(nullptr);
 			*a_engine.v_used++ = value;
 		}
-		virtual void f_call(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments != 1) throw std::runtime_error("requires an argument");
-			f_call(a_engine);
-		}
-		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments != 1) throw std::runtime_error("requires an argument");
-			a_engine.v_context->v_stack[1] = a_engine.v_used[-1];
-			a_engine.v_used = a_engine.v_context->v_stack + 2;
-			++a_engine.v_context;
-			f_call(a_engine);
-		}
 	};
 	struct t_call : t_bindable
 	{
-		static void* v_instructions[];
+		inline static void* v_return = reinterpret_cast<void*>(e_instruction__RETURN);
 
-		void f_call(t_engine& a_engine, size_t a_arguments, bool a_tail)
-		{
-			if (a_arguments != 3) throw std::runtime_error("requires three arguments");
-			if (a_tail) {
-				a_engine.v_used = std::copy_n(a_engine.v_used - 4, 4, a_engine.v_context->v_stack);
-			} else {
-				--a_engine.v_context;
-				a_engine.v_context->v_stack = a_engine.v_used - 4;
-			}
-			a_engine.v_context->v_code = nullptr;
-			a_engine.v_context->v_current = v_instructions;
-			a_engine.v_context->v_scope = nullptr;
-			a_engine.v_used[-1]->f_call(a_engine, 0);
-		}
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			f_call(a_engine, a_arguments, false);
-		}
-		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-		{
-			f_call(a_engine, a_arguments, true);
+			if (a_arguments != 3) throw std::runtime_error("requires three arguments");
+			if (a_engine.v_context <= a_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
+			--a_engine.v_context;
+			a_engine.v_context->v_stack = a_engine.v_used - 4;
+			a_engine.v_context->v_code = nullptr;
+			a_engine.v_context->v_current = &v_return;
+			a_engine.v_context->v_scope = nullptr;
+			a_engine.v_used[-1]->f_call(a_engine, 0);
 		}
 	};
 	struct t_abort : t_bindable
 	{
-		void f_abort(t_engine& a_engine, size_t a_arguments)
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
+			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
 			auto tail = a_engine.v_used - a_arguments - 1;
 			auto context = a_engine.v_context;
 			while (!dynamic_cast<t_call*>(context->v_stack[0]) || context->v_stack[1] != tail[1])
@@ -1211,21 +1175,6 @@ namespace prompt
 			a_engine.v_context = context;
 			handler->f_call(a_engine, a_arguments);
 		}
-		virtual void f_call(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
-			f_abort(a_engine, a_arguments);
-		}
-		virtual void f_tail(t_engine& a_engine, size_t a_arguments)
-		{
-			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
-			a_engine.v_used = std::copy(a_engine.v_used - a_arguments, a_engine.v_used, a_engine.v_context->v_stack + 1);
-			++a_engine.v_context;
-			f_abort(a_engine, a_arguments);
-		}
-	};
-	void* t_call::v_instructions[] = {
-		reinterpret_cast<void*>(e_instruction__RETURN)
 	};
 }
 
