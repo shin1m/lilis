@@ -1178,26 +1178,25 @@ namespace prompt
 	};
 }
 
-void f_print_with_caret(std::FILE* a_out, const char* a_path, long a_position, size_t a_column)
+template<typename T_seek, typename T_get>
+void f_print_with_caret(T_seek a_seek, T_get a_get, std::FILE* a_out, size_t a_column)
 {
-	auto file = std::fopen(a_path, "r");
-	std::fseek(file, a_position, SEEK_SET);
-	std::putc('\t', a_out);
+	a_seek();
+	std::putwc('\t', a_out);
 	while (true) {
-		int c = std::getc(file);
-		if (c == EOF) break;
-		std::putc(c, a_out);
-		if (c == '\n') break;
+		wint_t c = a_get();
+		if (c == WEOF || c == L'\n') break;
+		std::putwc(c, a_out);
 	}
-	std::fseek(file, a_position, SEEK_SET);
-	std::putc('\t', a_out);
+	std::putwc('\n', a_out);
+	a_seek();
+	std::putwc('\t', a_out);
 	for (size_t i = 1; i < a_column; ++i) {
-		int c = std::getc(file);
-		std::putc(std::isspace(c) ? c : ' ', a_out);
+		wint_t c = a_get();
+		std::putwc(std::iswspace(c) ? c : ' ', a_out);
 	}
-	std::putc('^', a_out);
-	std::putc('\n', a_out);
-	std::fclose(file);
+	std::putwc('^', a_out);
+	std::putwc('\n', a_out);
 }
 
 struct t_at
@@ -1207,22 +1206,26 @@ struct t_at
 	size_t v_column;
 };
 
+struct t_error : std::runtime_error
+{
+	const t_at v_at;
+
+	t_error(const char* a_message, const t_at& a_at) : std::runtime_error(a_message), v_at(a_at)
+	{
+	}
+	template<typename T_seek, typename T_get>
+	void f_dump(const char* a_path, T_seek a_seek, T_get a_get) const
+	{
+		std::fprintf(stderr, "at %s:%zu:%zu\n", a_path, v_at.v_line, v_at.v_column);
+		f_print_with_caret([&]
+		{
+			a_seek(v_at.v_position);
+		}, a_get, stderr, v_at.v_column);
+	}
+};
+
 struct t_parser
 {
-	struct t_error : std::runtime_error
-	{
-		const t_at v_at;
-
-		t_error(t_parser& a_parser) : std::runtime_error("lexical error"), v_at(a_parser.v_at)
-		{
-		}
-		void f_dump(const char* a_path) const
-		{
-			std::fprintf(stderr, "at %ls:%" PRIuPTR ":%" PRIuPTR "\n", a_path, static_cast<uintptr_t>(v_at.v_line), static_cast<uintptr_t>(v_at.v_column));
-			f_print_with_caret(stderr, a_path, v_at.v_position, v_at.v_column);
-		}
-	};
-
 	t_engine& v_engine;
 	std::function<wint_t()> v_get;
 	long v_p = 0;
@@ -1272,11 +1275,11 @@ struct t_parser
 		f_next();
 		auto head = v_engine.f_pointer<t_pair>(nullptr);
 		if (v_c != L')') {
-			if (v_c == WEOF) throw std::runtime_error("unexpected end of file");
+			if (v_c == WEOF) throw t_error("unexpected end of file", v_at);
 			head = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
 			auto tail = v_engine.f_pointer<t_pair>(head);
 			while (v_c != L')') {
-				if (v_c == WEOF) throw std::runtime_error("unexpected end of file");
+				if (v_c == WEOF) throw t_error("unexpected end of file", v_at);
 				auto p = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
 				tail->v_tail = p;
 				tail = p;
@@ -1350,7 +1353,7 @@ t_object* t_parser::f_expression()
 						cs.push_back(L'\v');
 						break;
 					default:
-						throw t_error(*this);
+						throw t_error("lexical error", v_at);
 					}
 				} else {
 					cs.push_back(v_c);
@@ -1389,7 +1392,7 @@ t_object* t_parser::f_expression()
 				case L'x':
 					cs.push_back(v_c);
 					f_get();
-					if (!std::iswxdigit(v_c)) throw t_error(*this);
+					if (!std::iswxdigit(v_c)) throw t_error("lexical error", v_at);
 					do {
 						cs.push_back(v_c);
 						f_get();
@@ -1400,7 +1403,7 @@ t_object* t_parser::f_expression()
 					return nullptr;
 				default:
 					while (std::iswdigit(v_c)) {
-						if (v_c >= L'8') throw t_error(*this);
+						if (v_c >= L'8') throw t_error("lexical error", v_at);
 						cs.push_back(v_c);
 						f_get();
 					}
@@ -1426,7 +1429,7 @@ t_object* t_parser::f_expression()
 						cs.push_back(v_c);
 						f_get();
 					}
-					if (!std::iswdigit(v_c)) throw t_error(*this);
+					if (!std::iswdigit(v_c)) throw t_error("lexical error", v_at);
 					do {
 						cs.push_back(v_c);
 						f_get();
@@ -1447,7 +1450,7 @@ t_object* t_parser::f_expression()
 			do {
 				cs.push_back(v_c);
 				f_get();
-			} while (v_c != WEOF && !std::iswspace(v_c) && v_c != L')');
+			} while (v_c != WEOF && !std::iswspace(v_c) && v_c != L')' && v_c != L';');
 			f_skip();
 			return v_engine.f_symbol({cs.data(), cs.size()});
 		}
@@ -1518,6 +1521,16 @@ int main(int argc, char* argv[])
 					}
 				} catch (std::exception& e) {
 					std::fprintf(stderr, "caught: %s\n", e.what());
+					if (auto p = dynamic_cast<t_error*>(&e)) {
+						decltype(cs.begin()) i;
+						p->f_dump(nullptr, [&](long a_position)
+						{
+							i = cs.begin() + a_position;
+						}, [&]
+						{
+							return *i++;
+						});
+					}
 				}
 			}
 			if (c == WEOF) break;
@@ -1538,6 +1551,16 @@ int main(int argc, char* argv[])
 			engine.f_run(*code);
 		} catch (std::exception& e) {
 			std::fprintf(stderr, "caught: %s\n", e.what());
+			if (auto p = dynamic_cast<t_error*>(&e)) {
+				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(argv[1], "r"), &std::fclose);
+				p->f_dump(argv[1], [&](long a_position)
+				{
+					std::fseek(file.get(), a_position, SEEK_SET);
+				}, [&]
+				{
+					return std::getwc(file.get());
+				});
+			}
 			return -1;
 		}
 	}
