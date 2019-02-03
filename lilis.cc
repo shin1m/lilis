@@ -1524,7 +1524,7 @@ int main(int argc, char* argv[])
 						(*code)->f_compile(expressions);
 						auto scope = engine.f_pointer(engine.f_run(*code));
 						for (auto& x : (*code)->v_bindings) (*module)->insert_or_assign(x.first, x.second->f_export(scope));
-						std::printf("%ls\n", f_string(engine.v_used[0]).c_str());
+						std::printf("%ls\n", f_string(engine.v_used[-1]).c_str());
 					}
 				} catch (std::exception& e) {
 					std::fprintf(stderr, "caught: %s\n", e.what());
