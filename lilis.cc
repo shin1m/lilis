@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <deque>
-#include <functional>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -1224,10 +1223,11 @@ struct t_error : std::runtime_error
 	}
 };
 
+template<typename T_get>
 struct t_parser
 {
 	t_engine& v_engine;
-	std::function<wint_t()> v_get;
+	T_get v_get;
 	long v_p = 0;
 	long v_position = 0;
 	size_t v_line = 1;
@@ -1289,12 +1289,12 @@ struct t_parser
 		return head;
 	}
 
-	t_parser(t_engine& a_engine, std::function<wint_t()>&& a_get) : v_engine(a_engine), v_get(std::move(a_get))
+	t_parser(t_engine& a_engine, T_get&& a_get) : v_engine(a_engine), v_get(std::forward<T_get>(a_get))
 	{
 		v_c = v_get();
 		f_skip();
 	}
-	t_pair* f_parse()
+	t_pair* operator()()
 	{
 		if (v_c == WEOF) return nullptr;
 		auto head = v_engine.f_pointer(v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr));
@@ -1308,7 +1308,8 @@ struct t_parser
 	}
 };
 
-t_object* t_parser::f_expression()
+template<typename T_get>
+t_object* t_parser<T_get>::f_expression()
 {
 	switch (v_c) {
 	case L'"':
@@ -1457,6 +1458,12 @@ t_object* t_parser::f_expression()
 	}
 }
 
+template<typename T_get>
+t_pair* f_parse(t_engine& a_engine, T_get&& a_get)
+{
+	return t_parser<T_get>(a_engine, std::forward<T_get>(a_get))();
+}
+
 }
 
 int main(int argc, char* argv[])
@@ -1506,10 +1513,10 @@ int main(int argc, char* argv[])
 			if (!cs.empty()) {
 				cs.push_back(WEOF);
 				try {
-					auto expressions = engine.f_pointer(t_parser(engine, [i = cs.begin()]() mutable
+					auto expressions = engine.f_pointer(f_parse(engine, [i = cs.begin()]() mutable
 					{
 						return *i++;
-					}).f_parse());
+					}));
 					if (expressions) {
 						auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
 						(*code)->v_imports.push_back(global);
@@ -1540,10 +1547,10 @@ int main(int argc, char* argv[])
 			auto expressions = engine.f_pointer<t_pair>(nullptr);
 			{
 				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(argv[1], "r"), &std::fclose);
-				expressions = t_parser(engine, [&]
+				expressions = f_parse(engine, [&]
 				{
 					return std::getwc(file.get());
-				}).f_parse();
+				});
 			}
 			auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
 			(*code)->v_imports.push_back(global);
