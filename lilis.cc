@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -18,11 +19,14 @@ using namespace std::literals;
 struct t_engine;
 struct t_context;
 struct t_symbol;
+struct t_pair;
 struct t_scope;
+struct t_module;
 struct t_code;
 namespace ast
 {
 struct t_node;
+struct t_emit;
 }
 
 struct t_object
@@ -95,6 +99,40 @@ struct t_pointer : t_root
 	}
 };
 
+template<typename T>
+struct t_object_of : t_object
+{
+	virtual size_t f_size() const;
+	virtual t_object* f_forward(t_engine& a_engine);
+};
+
+template<typename T>
+struct t_holder : t_object_of<t_holder<T>>
+{
+	T* v_holdee;
+
+	template<typename... T_an>
+	t_holder(t_engine& a_engine, T_an&&... a_an) : v_holdee(new T(a_engine, this, std::forward<T_an>(a_an)...))
+	{
+	}
+	virtual void f_scan(t_engine& a_engine)
+	{
+		v_holdee->f_scan();
+	}
+	virtual void f_destruct(t_engine& a_engine)
+	{
+		delete v_holdee;
+	}
+	operator T*() const
+	{
+		return v_holdee;
+	}
+	T* operator->() const
+	{
+		return v_holdee;
+	}
+};
+
 struct t_engine : t_root
 {
 	struct t_forward : t_object
@@ -128,6 +166,8 @@ struct t_engine : t_root
 	t_object** v_used = v_stack.get();
 	t_context* v_context;
 	std::map<std::wstring, t_symbol*, std::less<>> v_symbols;
+	t_holder<t_module>* v_global = nullptr;
+	std::map<std::wstring, t_holder<t_module>*, std::less<>> v_modules;
 	bool v_debug;
 	bool v_verbose;
 
@@ -202,6 +242,9 @@ struct t_engine : t_root
 	virtual void f_scan(t_engine& a_engine);
 	t_symbol* f_symbol(std::wstring_view a_name);
 	t_scope* f_run(t_code* a_code);
+	t_pair* f_parse(const char* a_path);
+	void f_run(t_holder<t_module>* a_module, t_pair* a_expressions);
+	t_holder<t_module>* f_module(const std::filesystem::path& a_path, std::wstring_view a_name);
 };
 
 template<typename T>
@@ -211,17 +254,16 @@ void t_pointer<T>::f_scan(t_engine& a_engine)
 }
 
 template<typename T>
-struct t_object_of : t_object
+size_t t_object_of<T>::f_size() const
 {
-	virtual size_t f_size() const
-	{
-		return std::max(sizeof(T), sizeof(t_engine::t_forward));
-	}
-	virtual t_object* f_forward(t_engine& a_engine)
-	{
-		return a_engine.f_move(this);
-	}
-};
+	return std::max(sizeof(T), sizeof(t_engine::t_forward));
+}
+
+template<typename T>
+t_object* t_object_of<T>::f_forward(t_engine& a_engine)
+{
+	return a_engine.f_move(this);
+}
 
 inline std::wstring f_string(t_object* a_value)
 {
@@ -303,33 +345,6 @@ struct t_scope : t_object_of<t_scope>
 	}
 };
 
-template<typename T>
-struct t_holder : t_object_of<t_holder<T>>
-{
-	T* v_holdee;
-
-	template<typename... T_an>
-	t_holder(t_engine& a_engine, T_an&&... a_an) : v_holdee(new T(a_engine, this, std::forward<T_an>(a_an)...))
-	{
-	}
-	virtual void f_scan(t_engine& a_engine)
-	{
-		v_holdee->f_scan();
-	}
-	virtual void f_destruct(t_engine& a_engine)
-	{
-		delete v_holdee;
-	}
-	operator T*() const
-	{
-		return v_holdee;
-	}
-	T* operator->() const
-	{
-		return v_holdee;
-	}
-};
-
 struct t_binding
 {
 	virtual ~t_binding() = default;
@@ -340,27 +355,23 @@ struct t_binding
 	{
 		throw std::runtime_error("cannot generate");
 	}
-	virtual std::unique_ptr<t_binding> f_export(t_scope* a_scope)
-	{
-		throw std::runtime_error("cannot export");
-	}
 };
 
-struct t_bindings : std::map<t_symbol*, std::unique_ptr<t_binding>>
+struct t_bindings : std::map<t_symbol*, std::shared_ptr<t_binding>>
 {
 	void f_scan(t_engine& a_engine)
 	{
-		std::map<t_symbol*, std::unique_ptr<t_binding>> xs;
+		std::map<t_symbol*, std::shared_ptr<t_binding>> xs;
 		for (auto& x : *this) {
 			x.second->f_scan(a_engine);
 			xs.emplace(a_engine.f_forward(x.first), std::move(x.second));
 		}
-		*static_cast<std::map<t_symbol*, std::unique_ptr<t_binding>>*>(this) = std::move(xs);
+		*static_cast<std::map<t_symbol*, std::shared_ptr<t_binding>>*>(this) = std::move(xs);
 	}
-	t_binding* f_find(t_symbol* a_symbol) const
+	std::shared_ptr<t_binding> f_find(t_symbol* a_symbol) const
 	{
 		auto i = find(a_symbol);
-		return i == end() ? nullptr : i->second.get();
+		return i == end() ? nullptr : i->second;
 	}
 };
 
@@ -414,15 +425,21 @@ struct t_module : t_bindings
 	};
 
 	t_engine& v_engine;
+	std::filesystem::path v_path;
+	std::map<std::wstring, t_holder<t_module>*, std::less<>>::iterator v_entry;
 
-	t_module(t_engine& a_engine, t_holder<t_module>* a_this) : v_engine(a_engine)
+	t_module(t_engine& a_engine, t_holder<t_module>* a_this, const std::filesystem::path& a_path) : v_engine(a_engine), v_path(a_path)
 	{
+	}
+	~t_module()
+	{
+		if (v_entry != decltype(v_entry){}) v_engine.v_modules.erase(v_entry);
 	}
 	void f_scan()
 	{
 		t_bindings::f_scan(v_engine);
 	}
-	void f_register(std::wstring_view a_name, t_binding* a_binding)
+	void f_register(std::wstring_view a_name, const std::shared_ptr<t_binding>& a_binding)
 	{
 		emplace(v_engine.f_symbol(a_name), a_binding);
 	}
@@ -445,7 +462,7 @@ enum t_instruction
 
 struct t_binder
 {
-	virtual std::unique_ptr<ast::t_node> f_bind(t_code* a_code, t_object* a_arguments) = 0;
+	virtual void f_bind(t_code* a_code, t_object* a_arguments, ast::t_emit& a_emit) = 0;
 };
 
 struct t_code
@@ -463,10 +480,6 @@ struct t_code
 		}
 		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer);
 		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer, std::unique_ptr<ast::t_node>&& a_expression);
-		virtual std::unique_ptr<t_binding> f_export(t_scope* a_scope)
-		{
-			return std::make_unique<t_module::t_variable>(a_scope->f_locals()[v_index]);
-		}
 	};
 
 	t_engine& v_engine;
@@ -485,7 +498,7 @@ struct t_code
 	{
 	}
 	void f_scan();
-	std::pair<size_t, t_binding*> f_resolve(t_symbol* a_symbol) const
+	std::pair<size_t, std::shared_ptr<t_binding>> f_resolve(t_symbol* a_symbol) const
 	{
 		auto code = this;
 		for (size_t outer = 0;; ++outer) {
@@ -517,6 +530,7 @@ struct t_context
 
 inline t_engine::t_engine(bool a_debug, bool a_verbose) : v_contexts(new t_context[V_CONTEXTS]), v_context(v_contexts.get() + V_CONTEXTS), v_debug(a_debug), v_verbose(a_verbose)
 {
+	v_global = f_new<t_holder<t_module>>(*this, std::filesystem::path{});
 }
 
 inline void t_code::f_call(t_scope* a_outer, size_t a_arguments)
@@ -565,8 +579,6 @@ inline T* require_cast(U* a_p, const char* a_message)
 
 namespace ast
 {
-
-struct t_emit;
 
 struct t_node
 {
@@ -737,16 +749,16 @@ void t_engine::f_scan(t_engine& a_engine)
 	for (auto p = v_stack.get(); p != v_used; ++p) *p = a_engine.f_forward(*p);
 	for (auto p = v_context; p != v_contexts.get() + V_CONTEXTS; ++p) p->f_scan(*this);
 	for (auto& x : v_symbols) x.second = f_forward(x.second);
+	v_global = f_forward(v_global);
+	for (auto& x : v_modules) x.second = f_forward(x.second);
 }
 
 t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 {
 	auto i = v_symbols.lower_bound(a_name);
-	if (i == v_symbols.end() || i->first != a_name) {
-		i = v_symbols.emplace_hint(i, a_name, nullptr);
-		i->second = f_new<t_symbol>(i);
-	}
-	return i->second;
+	if (i != v_symbols.end() && i->first == a_name) return i->second;
+	i = v_symbols.emplace_hint(i, a_name, nullptr);
+	return i->second = f_new<t_symbol>(i);
 }
 
 t_scope* t_engine::f_run(t_code* a_code)
@@ -756,7 +768,7 @@ t_scope* t_engine::f_run(t_code* a_code)
 	auto end = reinterpret_cast<void*>(e_instruction__END);
 	top->v_current = &end;
 	top->v_scope = nullptr;
-	top->v_stack = v_used = v_stack.get();
+	top->v_stack = v_used;
 	*v_used++ = nullptr;
 	a_code->f_call(nullptr, 0);
 	auto scope = f_pointer(v_context->v_scope);
@@ -828,9 +840,20 @@ t_scope* t_engine::f_run(t_code* a_code)
 				v_context->v_current = static_cast<void**>(*v_context->v_current);
 			break;
 		case e_instruction__END:
+			--v_used;
 			return scope;
 		}
 	}
+}
+
+void t_engine::f_run(t_holder<t_module>* a_module, t_pair* a_expressions)
+{
+	auto module = f_pointer(a_module);
+	auto expressions = f_pointer(a_expressions);
+	auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, module));
+	(*code)->v_imports.push_back(v_global);
+	(*code)->f_compile(expressions);
+	f_run(*code);
 }
 
 std::unique_ptr<ast::t_node> t_object::f_generate(t_code* a_code)
@@ -911,11 +934,10 @@ void t_code::f_compile(t_object* a_source)
 		if (!p) break;
 		auto symbol = dynamic_cast<t_symbol*>(p->v_head);
 		if (!symbol) break;
-		auto binder = dynamic_cast<t_binder*>(f_resolve(symbol).second);
+		auto binder = dynamic_cast<t_binder*>(f_resolve(symbol).second.get());
 		if (!binder) break;
 		body = pair->v_tail;
-		binder->f_bind(this, p->v_tail)->f_emit(emit, 1, false);
-		emit(e_instruction__POP, 1);
+		binder->f_bind(this, p->v_tail, emit);
 	}
 	if (body) {
 		while (true) {
@@ -923,7 +945,7 @@ void t_code::f_compile(t_object* a_source)
 			body = pair->v_tail;
 			ast::f_generate(pair->v_head, this)->f_emit(emit, 1, !body);
 			if (!body) break;
-			emit(e_instruction__POP, 1);
+			emit(e_instruction__POP, 0);
 		}
 	} else {
 		if (v_outer) throw std::runtime_error("must have an expression");
@@ -971,7 +993,7 @@ struct t_quote : t_object_of<t_quote>
 
 struct t_define : t_binding, t_binder
 {
-	virtual std::unique_ptr<ast::t_node> f_bind(t_code* a_code, t_object* a_arguments)
+	virtual void f_bind(t_code* a_code, t_object* a_arguments, ast::t_emit& a_emit)
 	{
 		auto pair = require_cast<t_pair>(a_arguments, "must be list");
 		auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
@@ -980,7 +1002,9 @@ struct t_define : t_binding, t_binder
 		size_t index = a_code->v_locals.size();
 		a_code->v_locals.push_back(symbol);
 		a_code->v_bindings.emplace(symbol, new t_code::t_local(index));
-		return std::make_unique<ast::t_set>(0, index, ast::f_generate(pair->v_head, a_code));
+		ast::f_generate(pair->v_head, a_code)->f_emit(a_emit, 1, false);
+		a_emit(e_instruction__SET, 1)(size_t(0))(index);
+		a_emit(e_instruction__POP, 0);
 	}
 };
 
@@ -996,7 +1020,7 @@ struct t_set : t_binding
 			pair = require_cast<t_pair>(pair->v_tail, "must be list");
 			if (pair->v_tail) throw std::runtime_error("must have an expression");
 			auto [outer, binding] = a_code->f_resolve(symbol);
-			if (auto p = dynamic_cast<t_setter*>(binding)) return p->f_generate(a_code, outer, ast::f_generate(pair->v_head, a_code));
+			if (auto p = dynamic_cast<t_setter*>(binding.get())) return p->f_generate(a_code, outer, ast::f_generate(pair->v_head, a_code));
 			throw std::runtime_error("not setter");
 		}
 	};
@@ -1004,6 +1028,47 @@ struct t_set : t_binding
 	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
 	{
 		return std::make_unique<t_node>();
+	}
+};
+
+struct t_export : t_binding
+{
+	struct t_node : ast::t_node
+	{
+		virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
+		{
+			delete this;
+			auto pair = require_cast<t_pair>(a_arguments, "must be list");
+			auto name = require_cast<t_symbol>(pair->v_head, "must be symbol");
+			if (pair->v_tail) throw std::runtime_error("must have an symbol");
+			auto [outer, binding] = a_code->f_resolve(name);
+			while (!a_code->v_module) a_code = *a_code->v_outer;
+			if (dynamic_cast<t_setter*>(binding.get())) {
+				auto variable = std::make_shared<t_module::t_variable>(nullptr);
+				(*a_code->v_module)->insert_or_assign(name, variable);
+				return variable->f_generate(a_code, 0, binding->f_generate(a_code, outer));
+			}
+			(*a_code->v_module)->insert_or_assign(name, binding);
+			return std::make_unique<ast::t_quote>(a_code->v_engine, nullptr);
+		}
+	};
+
+	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
+	{
+		return std::make_unique<t_node>();
+	}
+};
+
+struct t_import : t_binding, t_binder
+{
+	virtual void f_bind(t_code* a_code, t_object* a_arguments, ast::t_emit& a_emit)
+	{
+		auto pair = require_cast<t_pair>(a_arguments, "must be list");
+		auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
+		if (pair->v_tail) throw std::runtime_error("must have an symbol");
+		auto code = a_code;
+		while (!code->v_module) code = *code->v_outer;
+		a_code->v_imports.push_back(a_code->v_engine.f_module((*code->v_module)->v_path.parent_path(), symbol->v_entry->first));
 	}
 };
 
@@ -1050,6 +1115,16 @@ struct t_eq : t_bindable
 		if (a_arguments != 2) throw std::runtime_error("requires two arguments");
 		a_engine.v_used -= 2;
 		a_engine.v_used[-1] = a_engine.v_used[0] == a_engine.v_used[1] ? this : nullptr;
+	}
+};
+
+struct t_is_pair : t_bindable
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		if (a_arguments != 1) throw std::runtime_error("requires an argument");
+		--a_engine.v_used;
+		a_engine.v_used[-1] = dynamic_cast<t_pair*>(a_engine.v_used[0]);
 	}
 };
 
@@ -1464,6 +1539,31 @@ t_pair* f_parse(t_engine& a_engine, T_get&& a_get)
 	return t_parser<T_get>(a_engine, std::forward<T_get>(a_get))();
 }
 
+t_pair* t_engine::f_parse(const char* a_path)
+{
+	auto fp = std::fopen(a_path, "r");
+	if (fp == NULL) throw std::runtime_error("unable to open");
+	std::unique_ptr<std::FILE, decltype(&std::fclose)> file(fp, &std::fclose);
+	return lilis::f_parse(*this, [&]
+	{
+		return std::getwc(fp);
+	});
+}
+
+t_holder<t_module>* t_engine::f_module(const std::filesystem::path& a_path, std::wstring_view a_name)
+{
+	auto i = v_modules.lower_bound(a_name);
+	if (i != v_modules.end() && i->first == a_name) return i->second;
+	auto path = a_path / a_name;
+	path += ".lisp";
+	auto expressions = f_pointer(f_parse(path.c_str()));
+	i = v_modules.emplace_hint(i, a_name, nullptr);
+	i->second = f_new<t_holder<t_module>>(*this, path);
+	(*i->second)->v_entry = i;
+	f_run(i->second, expressions);
+	return i->second;
+}
+
 }
 
 int main(int argc, char* argv[])
@@ -1488,20 +1588,25 @@ int main(int argc, char* argv[])
 	}
 	using namespace lilis;
 	t_engine engine(debug, verbose);
-	auto global = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine));
-	(*global)->f_register(L"lambda"sv, new t_code::t_lambda());
-	(*global)->f_register(L"define"sv, new t_define());
-	(*global)->f_register(L"set!"sv, new t_set());
-	(*global)->f_register(L"if"sv, new t_if());
-	(*global)->f_register(L"eq?"sv, new t_eq());
-	(*global)->f_register(L"cons"sv, new t_cons());
-	(*global)->f_register(L"car"sv, new t_car());
-	(*global)->f_register(L"cdr"sv, new t_cdr());
-	(*global)->f_register(L"print"sv, new t_print());
-	(*global)->f_register(L"call-with-prompt"sv, new prompt::t_call());
-	(*global)->f_register(L"abort-to-prompt"sv, new prompt::t_abort());
-	auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine));
+	{
+		auto global = *engine.v_global;
+		global->f_register(L"lambda"sv, std::make_shared<t_code::t_lambda>());
+		global->f_register(L"define"sv, std::make_shared<t_define>());
+		global->f_register(L"set!"sv, std::make_shared<t_set>());
+		global->f_register(L"export"sv, std::make_shared<t_export>());
+		global->f_register(L"import"sv, std::make_shared<t_import>());
+		global->f_register(L"if"sv, std::make_shared<t_if>());
+		global->f_register(L"eq?"sv, std::make_shared<t_eq>());
+		global->f_register(L"pair?"sv, std::make_shared<t_is_pair>());
+		global->f_register(L"cons"sv, std::make_shared<t_cons>());
+		global->f_register(L"car"sv, std::make_shared<t_car>());
+		global->f_register(L"cdr"sv, std::make_shared<t_cdr>());
+		global->f_register(L"print"sv, std::make_shared<t_print>());
+		global->f_register(L"call-with-prompt"sv, std::make_shared<prompt::t_call>());
+		global->f_register(L"abort-to-prompt"sv, std::make_shared<prompt::t_abort>());
+	}
 	if (argc < 2) {
+		auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine, ""sv));
 		while (true) {
 			std::fputs("> ", stdout);
 			std::vector<wint_t> cs;
@@ -1519,12 +1624,15 @@ int main(int argc, char* argv[])
 					}));
 					if (expressions) {
 						auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
-						(*code)->v_imports.push_back(global);
+						(*code)->v_imports.push_back(engine.v_global);
 						(*code)->v_imports.push_back(module);
 						(*code)->f_compile(expressions);
 						auto scope = engine.f_pointer(engine.f_run(*code));
-						for (auto& x : (*code)->v_bindings) (*module)->insert_or_assign(x.first, x.second->f_export(scope));
-						std::printf("%ls\n", f_string(engine.v_used[-1]).c_str());
+						for (auto& x : (*code)->v_bindings) {
+							auto p = dynamic_cast<t_code::t_local*>(x.second.get());
+							(*module)->insert_or_assign(x.first, p ? std::make_shared<t_module::t_variable>(scope->f_locals()[p->v_index]) : x.second);
+						}
+						std::printf("%ls\n", f_string(engine.v_used[0]).c_str());
 					}
 				} catch (std::exception& e) {
 					std::fprintf(stderr, "caught: %s\n", e.what());
@@ -1543,24 +1651,15 @@ int main(int argc, char* argv[])
 			if (c == WEOF) break;
 		}
 	} else {
+		auto path = std::filesystem::absolute(argv[1]);
+		auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine, path));
 		try {
-			auto expressions = engine.f_pointer<t_pair>(nullptr);
-			{
-				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(argv[1], "r"), &std::fclose);
-				expressions = f_parse(engine, [&]
-				{
-					return std::getwc(file.get());
-				});
-			}
-			auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
-			(*code)->v_imports.push_back(global);
-			(*code)->f_compile(expressions);
-			engine.f_run(*code);
+			engine.f_run(module, engine.f_parse(path.c_str()));
 		} catch (std::exception& e) {
 			std::fprintf(stderr, "caught: %s\n", e.what());
 			if (auto p = dynamic_cast<t_error*>(&e)) {
-				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(argv[1], "r"), &std::fclose);
-				p->f_dump(argv[1], [&](long a_position)
+				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(path.c_str(), "r"), &std::fclose);
+				p->f_dump(path.c_str(), [&](long a_position)
 				{
 					std::fseek(file.get(), a_position, SEEK_SET);
 				}, [&]

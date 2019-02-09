@@ -1,0 +1,7 @@
+(define not (lambda (x) (if x () 't)))
+(define equal? (lambda (x y) (if (pair? x)
+  (if (pair? y) (if (equal? (car x) (car y)) (equal? (cdr x) (cdr y))))
+  (eq? x y)
+)))
+(export not)
+(export equal?)

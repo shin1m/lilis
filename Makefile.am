@@ -2,6 +2,7 @@ bin_PROGRAMS = lilis
 AM_CPPFLAGS =
 AM_CXXFLAGS = -std=c++17
 AM_LDFLAGS =
+LDADD = -lstdc++fs
 if DEBUG
 AM_CXXFLAGS += -O0 -g
 else

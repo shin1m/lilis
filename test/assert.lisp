@@ -1,0 +1,8 @@
+(import boolean)
+(define assert (lambda (x) (if x () (abort-to-prompt ()))))
+(define print-assert-equal (lambda (x y)
+  (print x)
+  (assert (equal? x y))
+))
+(export assert)
+(export print-assert-equal)

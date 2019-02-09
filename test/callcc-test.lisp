@@ -1,0 +1,7 @@
+(import callcc)
+(main (lambda ()
+  (import assert)
+  (define f (lambda (return) (return 'x) 'y))
+  (print-assert-equal (f (lambda (x) x)) 'y)
+  (print-assert-equal (call/cc f) 'x)
+))

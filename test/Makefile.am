@@ -5,13 +5,21 @@ scripts = \
 	hello.lisp \
 	condition.lisp \
 	set.lisp \
+	import.lisp \
+	boolean-test.lisp \
+	peano-test.lisp \
 	fibonacci.lisp \
 	hanoi.lisp \
 	prompt.lisp \
-	shiftreset.lisp \
-	tailyield.lisp \
-	yield.lisp \
-	callcc.lisp \
-	generate.lisp
+	shiftreset-test.lisp \
+	shiftreset-yield.lisp \
+	shiftreset-tail.lisp \
+	callcc-test.lisp \
+	callcc-generate.lisp
 TESTS = $(scripts)
-EXTRA_DIST = $(scripts)
+EXTRA_DIST = $(scripts) \
+	assert.lisp \
+	boolean.lisp \
+	peano.lisp \
+	shiftreset.lisp \
+	callcc.lisp

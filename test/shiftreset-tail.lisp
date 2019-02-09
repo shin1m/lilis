@@ -1,0 +1,6 @@
+(import shiftreset)
+(define k (reset (lambda ()
+  (shift (lambda (k) k))
+  (shift (lambda (k) k))
+)))
+(k ())

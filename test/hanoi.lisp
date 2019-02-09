@@ -19,7 +19,8 @@
   (cons (car xs) (put (cdr xs) (cdr i) x))
   (cons x (cdr xs))
 )))
-(print (hanoi '(a b c d e) (lambda (towers from to)
+(import assert)
+(print-assert-equal (hanoi '(a b c d e) (lambda (towers from to)
   (define tower (get towers from))
   (print towers)
   (put
@@ -27,4 +28,4 @@
     to
     (cons (car tower) (get towers to))
   )
-)))
+)) '(() () (a b c d e)))
