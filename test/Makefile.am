@@ -3,6 +3,7 @@ LISP_LOG_COMPILER = $(top_builddir)/lilis
 AM_LISP_LOG_FLAGS = --debug --verbose
 scripts = \
 	hello.lisp \
+	macro.lisp \
 	condition.lisp \
 	set.lisp \
 	import.lisp \

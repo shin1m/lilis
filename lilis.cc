@@ -241,7 +241,7 @@ struct t_engine : t_root
 	}
 	virtual void f_scan(t_engine& a_engine);
 	t_symbol* f_symbol(std::wstring_view a_name);
-	t_scope* f_run(t_code* a_code);
+	t_scope* f_run(t_code* a_code, t_pair* a_arguments);
 	t_pair* f_parse(const char* a_path);
 	void f_run(t_holder<t_module>* a_module, t_pair* a_expressions);
 	t_holder<t_module>* f_module(const std::filesystem::path& a_path, std::wstring_view a_name);
@@ -460,17 +460,8 @@ enum t_instruction
 	e_instruction__END
 };
 
-struct t_binder
-{
-	virtual void f_bind(t_code* a_code, t_object* a_arguments, ast::t_emit& a_emit) = 0;
-};
-
 struct t_code
 {
-	struct t_lambda : t_binding
-	{
-		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer);
-	};
 	struct t_local : t_binding, t_setter
 	{
 		size_t v_index;
@@ -625,32 +616,6 @@ struct t_emit
 	}
 };
 
-struct t_lambda : t_node
-{
-	struct t_node : ast::t_node
-	{
-		t_pointer<t_holder<t_code>> v_code;
-
-		t_node(t_holder<t_code>* a_code) : v_code((*a_code)->v_engine, a_code)
-		{
-		}
-		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
-		{
-			a_emit(e_instruction__LAMBDA, a_stack + 1)(v_code);
-		}
-	};
-
-	virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
-	{
-		delete this;
-		auto& engine = a_code->v_engine;
-		auto arguments = engine.f_pointer(a_arguments);
-		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
-		(*code)->f_compile(arguments);
-		return std::make_unique<t_node>(code);
-	}
-};
-
 struct t_get : t_node
 {
 	size_t v_outer;
@@ -761,7 +726,7 @@ t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 	return i->second = f_new<t_symbol>(i);
 }
 
-t_scope* t_engine::f_run(t_code* a_code)
+t_scope* t_engine::f_run(t_code* a_code, t_pair* a_arguments)
 {
 	auto top = --v_context;
 	top->v_code = nullptr;
@@ -770,7 +735,14 @@ t_scope* t_engine::f_run(t_code* a_code)
 	top->v_scope = nullptr;
 	top->v_stack = v_used;
 	*v_used++ = nullptr;
-	a_code->f_call(nullptr, 0);
+	{
+		auto p = v_used;
+		for (; a_arguments; a_arguments = require_cast<t_pair>(a_arguments->v_tail, "must be list")) {
+			*v_used++ = a_arguments->v_head;
+			if (!a_arguments->v_tail) break;
+		}
+		a_code->f_call(nullptr, v_used - p);
+	}
 	auto scope = f_pointer(v_context->v_scope);
 	while (true) {
 		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_context->v_current))) {
@@ -826,7 +798,7 @@ t_scope* t_engine::f_run(t_code* a_code)
 			++v_context;
 			break;
 		case e_instruction__LAMBDA:
-			*v_used++ = f_new<lilis::t_lambda>(*reinterpret_cast<t_holder<t_code>**>(++v_context->v_current), v_context->v_scope);
+			*v_used++ = f_new<t_lambda>(*reinterpret_cast<t_holder<t_code>**>(++v_context->v_current), v_context->v_scope);
 			++v_context->v_current;
 			break;
 		case e_instruction__JUMP:
@@ -853,7 +825,7 @@ void t_engine::f_run(t_holder<t_module>* a_module, t_pair* a_expressions)
 	auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, module));
 	(*code)->v_imports.push_back(v_global);
 	(*code)->f_compile(expressions);
-	f_run(*code);
+	f_run(*code, nullptr);
 }
 
 std::unique_ptr<ast::t_node> t_object::f_generate(t_code* a_code)
@@ -883,11 +855,6 @@ std::unique_ptr<ast::t_node> t_module::t_variable::f_generate(t_code* a_code, si
 	auto p = std::make_unique<ast::t_call>(std::make_unique<ast::t_quote>(a_code->v_engine, a_code->v_engine.f_new<t_set>(this)));
 	p->v_arguments.push_back(std::move(a_expression));
 	return std::move(p);
-}
-
-std::unique_ptr<ast::t_node> t_code::t_lambda::f_generate(t_code* a_code, size_t a_outer)
-{
-	return std::make_unique<ast::t_lambda>();
 }
 
 std::unique_ptr<ast::t_node> t_code::t_local::f_generate(t_code* a_code, size_t a_outer)
@@ -925,21 +892,9 @@ void t_code::f_compile(t_object* a_source)
 		a_source = pair->v_tail;
 	}
 	v_arguments = v_locals.size();
-	auto body = v_engine.f_pointer(a_source);
 	ast::t_emit emit{this};
-	while (body) {
-		auto pair = dynamic_cast<t_pair*>(static_cast<t_object*>(body));
-		if (!pair) break;
-		auto p = dynamic_cast<t_pair*>(pair->v_head);
-		if (!p) break;
-		auto symbol = dynamic_cast<t_symbol*>(p->v_head);
-		if (!symbol) break;
-		auto binder = dynamic_cast<t_binder*>(f_resolve(symbol).second.get());
-		if (!binder) break;
-		body = pair->v_tail;
-		binder->f_bind(this, p->v_tail, emit);
-	}
-	if (body) {
+	auto body = v_engine.f_pointer(a_source);
+	if (body)
 		while (true) {
 			auto pair = require_cast<t_pair>(static_cast<t_object*>(body), "must be list");
 			body = pair->v_tail;
@@ -947,10 +902,8 @@ void t_code::f_compile(t_object* a_source)
 			if (!body) break;
 			emit(e_instruction__POP, 0);
 		}
-	} else {
-		if (v_outer) throw std::runtime_error("must have an expression");
+	else
 		emit(e_instruction__INSTANCE, 1)(static_cast<t_object*>(nullptr));
-	}
 	emit(e_instruction__RETURN, 0);
 	for (auto& x : emit.v_labels) {
 		auto p = v_instructions.data() + x.v_target;
@@ -991,20 +944,116 @@ struct t_quote : t_object_of<t_quote>
 	}
 };
 
-struct t_define : t_binding, t_binder
+struct t_lambda_expression : t_binding
 {
-	virtual void f_bind(t_code* a_code, t_object* a_arguments, ast::t_emit& a_emit)
+	struct t_instantiate : ast::t_node
 	{
-		auto pair = require_cast<t_pair>(a_arguments, "must be list");
-		auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
-		pair = require_cast<t_pair>(pair->v_tail, "must be list");
-		if (pair->v_tail) throw std::runtime_error("must have an expression");
-		size_t index = a_code->v_locals.size();
-		a_code->v_locals.push_back(symbol);
-		a_code->v_bindings.emplace(symbol, new t_code::t_local(index));
-		ast::f_generate(pair->v_head, a_code)->f_emit(a_emit, 1, false);
-		a_emit(e_instruction__SET, 1)(size_t(0))(index);
-		a_emit(e_instruction__POP, 0);
+		t_pointer<t_holder<t_code>> v_code;
+
+		t_instantiate(t_holder<t_code>* a_code) : v_code((*a_code)->v_engine, a_code)
+		{
+		}
+		virtual void f_emit(ast::t_emit& a_emit, size_t a_stack, bool a_tail)
+		{
+			a_emit(e_instruction__LAMBDA, a_stack + 1)(v_code);
+		}
+	};
+	struct t_compile : ast::t_node
+	{
+		virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
+		{
+			delete this;
+			auto& engine = a_code->v_engine;
+			auto arguments = engine.f_pointer(a_arguments);
+			auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
+			(*code)->f_compile(arguments);
+			return std::make_unique<t_instantiate>(code);
+		}
+	};
+
+	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
+	{
+		return std::make_unique<t_compile>();
+	}
+};
+
+struct t_define : t_binding
+{
+	struct t_node : ast::t_node
+	{
+		virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
+		{
+			delete this;
+			auto pair = require_cast<t_pair>(a_arguments, "must be list");
+			auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
+			pair = require_cast<t_pair>(pair->v_tail, "must be list");
+			if (pair->v_tail) throw std::runtime_error("must be nil");
+			size_t index = a_code->v_locals.size();
+			a_code->v_locals.push_back(symbol);
+			auto p = new t_code::t_local(index);
+			a_code->v_bindings.emplace(symbol, p);
+			return p->f_generate(a_code, 0, ast::f_generate(pair->v_head, a_code));
+		}
+	};
+
+	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
+	{
+		return std::make_unique<t_node>();
+	}
+};
+
+struct t_macro : t_binding
+{
+	struct t_apply : ast::t_node
+	{
+		t_code* v_code;
+
+		t_apply(t_code* a_code) : v_code(a_code)
+		{
+		}
+		virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
+		{
+			auto thiz = std::unique_ptr<t_node>(this);
+			v_code->v_engine.f_run(v_code, a_arguments ? require_cast<t_pair>(a_arguments, "must be list") : nullptr);
+			return ast::f_generate(v_code->v_engine.v_used[0], a_code);
+		}
+	};
+	struct t_instance : t_binding
+	{
+		t_holder<t_code>* v_code;
+
+		t_instance(t_holder<t_code>* a_code) : v_code(a_code)
+		{
+		}
+		virtual void f_scan(t_engine& a_engine)
+		{
+			v_code = a_engine.f_forward(v_code);
+		}
+		virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
+		{
+			return std::make_unique<t_apply>(*v_code);
+		}
+	};
+	struct t_compile : ast::t_node
+	{
+		virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
+		{
+			delete this;
+			auto pair = require_cast<t_pair>(a_arguments, "must be list");
+			auto signature = require_cast<t_pair>(pair->v_head, "must be list");
+			auto& engine = a_code->v_engine;
+			auto symbol = engine.f_pointer(require_cast<t_symbol>(signature->v_head, "must be symbol"));
+			auto arguments = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(signature->v_tail), engine.f_pointer(pair->v_tail)));
+			auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
+			(*code)->f_compile(arguments);
+			a_code->v_bindings.emplace(symbol, new t_instance(code));
+			return std::make_unique<ast::t_quote>(engine, nullptr);
+		}
+	};
+
+	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
+	{
+		return std::make_unique<t_compile>();
 	}
 };
 
@@ -1018,7 +1067,7 @@ struct t_set : t_binding
 			auto pair = require_cast<t_pair>(a_arguments, "must be list");
 			auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
 			pair = require_cast<t_pair>(pair->v_tail, "must be list");
-			if (pair->v_tail) throw std::runtime_error("must have an expression");
+			if (pair->v_tail) throw std::runtime_error("must be nil");
 			auto [outer, binding] = a_code->f_resolve(symbol);
 			if (auto p = dynamic_cast<t_setter*>(binding.get())) return p->f_generate(a_code, outer, ast::f_generate(pair->v_head, a_code));
 			throw std::runtime_error("not setter");
@@ -1039,16 +1088,16 @@ struct t_export : t_binding
 		{
 			delete this;
 			auto pair = require_cast<t_pair>(a_arguments, "must be list");
-			auto name = require_cast<t_symbol>(pair->v_head, "must be symbol");
-			if (pair->v_tail) throw std::runtime_error("must have an symbol");
-			auto [outer, binding] = a_code->f_resolve(name);
+			auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
+			if (pair->v_tail) throw std::runtime_error("must be nil");
+			auto [outer, binding] = a_code->f_resolve(symbol);
 			while (!a_code->v_module) a_code = *a_code->v_outer;
 			if (dynamic_cast<t_setter*>(binding.get())) {
 				auto variable = std::make_shared<t_module::t_variable>(nullptr);
-				(*a_code->v_module)->insert_or_assign(name, variable);
+				(*a_code->v_module)->insert_or_assign(symbol, variable);
 				return variable->f_generate(a_code, 0, binding->f_generate(a_code, outer));
 			}
-			(*a_code->v_module)->insert_or_assign(name, binding);
+			(*a_code->v_module)->insert_or_assign(symbol, binding);
 			return std::make_unique<ast::t_quote>(a_code->v_engine, nullptr);
 		}
 	};
@@ -1059,16 +1108,26 @@ struct t_export : t_binding
 	}
 };
 
-struct t_import : t_binding, t_binder
+struct t_import : t_binding
 {
-	virtual void f_bind(t_code* a_code, t_object* a_arguments, ast::t_emit& a_emit)
+	struct t_node : ast::t_node
 	{
-		auto pair = require_cast<t_pair>(a_arguments, "must be list");
-		auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
-		if (pair->v_tail) throw std::runtime_error("must have an symbol");
-		auto code = a_code;
-		while (!code->v_module) code = *code->v_outer;
-		a_code->v_imports.push_back(a_code->v_engine.f_module((*code->v_module)->v_path.parent_path(), symbol->v_entry->first));
+		virtual std::unique_ptr<ast::t_node> f_apply(t_code* a_code, t_object* a_arguments)
+		{
+			delete this;
+			auto pair = require_cast<t_pair>(a_arguments, "must be list");
+			auto symbol = require_cast<t_symbol>(pair->v_head, "must be symbol");
+			if (pair->v_tail) throw std::runtime_error("must be nil");
+			auto code = a_code;
+			while (!code->v_module) code = *code->v_outer;
+			a_code->v_imports.push_back(a_code->v_engine.f_module((*code->v_module)->v_path.parent_path(), symbol->v_entry->first));
+			return std::make_unique<ast::t_quote>(a_code->v_engine, nullptr);
+		}
+	};
+
+	virtual std::unique_ptr<ast::t_node> f_generate(t_code* a_code, size_t a_outer)
+	{
+		return std::make_unique<t_node>();
 	}
 };
 
@@ -1085,7 +1144,7 @@ struct t_if : t_binding
 			auto truee = ast::f_generate(pair->v_head, a_code);
 			if (!pair->v_tail) return std::make_unique<ast::t_if>(std::move(condition), std::move(truee), nullptr);
 			pair = require_cast<t_pair>(pair->v_tail, "must be list");
-			if (pair->v_tail) throw std::runtime_error("must be end");
+			if (pair->v_tail) throw std::runtime_error("must be nil");
 			return std::make_unique<ast::t_if>(std::move(condition), std::move(truee), ast::f_generate(pair->v_head, a_code));
 		}
 	};
@@ -1590,7 +1649,8 @@ int main(int argc, char* argv[])
 	t_engine engine(debug, verbose);
 	{
 		auto global = *engine.v_global;
-		global->f_register(L"lambda"sv, std::make_shared<t_code::t_lambda>());
+		global->f_register(L"lambda"sv, std::make_shared<t_lambda_expression>());
+		global->f_register(L"define-macro"sv, std::make_shared<t_macro>());
 		global->f_register(L"define"sv, std::make_shared<t_define>());
 		global->f_register(L"set!"sv, std::make_shared<t_set>());
 		global->f_register(L"export"sv, std::make_shared<t_export>());
@@ -1627,7 +1687,7 @@ int main(int argc, char* argv[])
 						(*code)->v_imports.push_back(engine.v_global);
 						(*code)->v_imports.push_back(module);
 						(*code)->f_compile(expressions);
-						auto scope = engine.f_pointer(engine.f_run(*code));
+						auto scope = engine.f_pointer(engine.f_run(*code, nullptr));
 						for (auto& x : (*code)->v_bindings) {
 							auto p = dynamic_cast<t_code::t_local*>(x.second.get());
 							(*module)->insert_or_assign(x.first, p ? std::make_shared<t_module::t_variable>(scope->f_locals()[p->v_index]) : x.second);
