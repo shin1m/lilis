@@ -277,6 +277,10 @@ struct t_symbol : t_object_of<t_symbol>
 	t_symbol(std::map<std::wstring, t_symbol*, std::less<>>::iterator a_entry) : v_entry(a_entry)
 	{
 	}
+	virtual void f_scan(t_engine& a_engine)
+	{
+		v_entry->second = this;
+	}
 	virtual void f_destruct(t_engine& a_engine)
 	{
 		a_engine.v_symbols.erase(v_entry);
@@ -425,10 +429,11 @@ struct t_module : t_bindings
 	};
 
 	t_engine& v_engine;
+	t_holder<t_module>* v_this;
 	std::filesystem::path v_path;
 	std::map<std::wstring, t_holder<t_module>*, std::less<>>::iterator v_entry;
 
-	t_module(t_engine& a_engine, t_holder<t_module>* a_this, const std::filesystem::path& a_path) : v_engine(a_engine), v_path(a_path)
+	t_module(t_engine& a_engine, t_holder<t_module>* a_this, const std::filesystem::path& a_path) : v_engine(a_engine), v_this(a_this), v_path(a_path)
 	{
 	}
 	~t_module()
@@ -438,6 +443,8 @@ struct t_module : t_bindings
 	void f_scan()
 	{
 		t_bindings::f_scan(v_engine);
+		v_this = v_engine.f_forward(v_this);
+		if (v_entry != decltype(v_entry){}) v_entry->second = v_this;
 	}
 	void f_register(std::wstring_view a_name, const std::shared_ptr<t_binding>& a_binding)
 	{
@@ -713,9 +720,7 @@ void t_engine::f_scan(t_engine& a_engine)
 {
 	for (auto p = v_stack.get(); p != v_used; ++p) *p = a_engine.f_forward(*p);
 	for (auto p = v_context; p != v_contexts.get() + V_CONTEXTS; ++p) p->f_scan(*this);
-	for (auto& x : v_symbols) x.second = f_forward(x.second);
 	v_global = f_forward(v_global);
-	for (auto& x : v_modules) x.second = f_forward(x.second);
 }
 
 t_symbol* t_engine::f_symbol(std::wstring_view a_name)
