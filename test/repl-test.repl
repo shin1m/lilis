@@ -1,0 +1,8 @@
+(define a 'hello)
+(define f (lambda (x) (print x 'world)))
+(f a)
+(define-macro m (x) (cons 'print (cons x '('world))))
+(m a)
+(set! a 'goodbye)
+(f a)
+(m a)
