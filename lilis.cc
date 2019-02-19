@@ -391,8 +391,8 @@ struct t_module : t_bindings
 	struct t_variable : t_with_value<t_object_of<t_variable>, t_object>, t_mutable
 	{
 		using t_base::t_base;
-		virtual t_object* f_generate(t_code* a_code);
 		virtual t_object* f_generate(t_code* a_code, t_object* a_expression);
+		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
 			switch (a_arguments) {
@@ -452,11 +452,6 @@ struct t_code
 {
 	struct t_local : t_with_value<t_object_of<t_local>, t_holder<t_code>>, t_mutable
 	{
-		struct t_get : t_with_value<t_object_of<t_get>, t_local>
-		{
-			using t_base::t_base;
-			virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
-		};
 		struct t_set : t_with_value<t_object_of<t_set>, t_local>
 		{
 			t_object* v_expression;
@@ -485,16 +480,12 @@ struct t_code
 				a_code = *a_code->v_outer;
 			}
 		}
-		virtual t_object* f_generate(t_code* a_code)
-		{
-			auto& engine = a_code->v_engine;
-			return engine.f_new<t_get>(engine.f_pointer(this));
-		}
 		virtual t_object* f_generate(t_code* a_code, t_object* a_expression)
 		{
 			auto& engine = a_code->v_engine;
 			return engine.f_new<t_set>(engine.f_pointer(this), engine.f_pointer(a_expression));
 		}
+		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 	};
 
 	t_engine& v_engine;
@@ -634,15 +625,15 @@ struct t_emit
 	}
 };
 
-void t_code::t_local::t_get::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
-{
-	a_emit(e_instruction__GET, a_stack + 1)(v_value->f_outer(a_emit.v_code))(v_value->v_index);
-}
-
 void t_code::t_local::t_set::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 {
 	v_expression->f_emit(a_emit, a_stack, false);
 	a_emit(e_instruction__SET, a_stack + 1)(v_value->f_outer(a_emit.v_code))(v_value->v_index);
+}
+
+void t_code::t_local::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
+{
+	a_emit(e_instruction__GET, a_stack + 1)(f_outer(a_emit.v_code))(v_index);
 }
 
 struct t_call : t_object_of<t_call>
@@ -817,7 +808,7 @@ void t_object::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 
 t_object* t_symbol::f_generate(t_code* a_code)
 {
-	return a_code->f_resolve(this)->f_generate(a_code);
+	return a_code->f_resolve(this);
 }
 
 t_object* t_pair::f_generate(t_code* a_code)
@@ -826,19 +817,19 @@ t_object* t_pair::f_generate(t_code* a_code)
 	return a_code->f_generate(v_head)->f_apply(a_code, tail);
 }
 
-t_object* t_module::t_variable::f_generate(t_code* a_code)
-{
-	auto& engine = a_code->v_engine;
-	return engine.f_new<t_call>(engine.f_pointer(this));
-}
-
 t_object* t_module::t_variable::f_generate(t_code* a_code, t_object* a_expression)
 {
 	auto& engine = a_code->v_engine;
 	auto expression = engine.f_pointer(a_expression);
-	auto p = engine.f_new<t_call>(engine.f_pointer(this));
+	auto p = engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_quote>(engine.f_pointer(this))));
 	p->v_arguments.push_back(expression);
 	return p;
+}
+
+void t_module::t_variable::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
+{
+	a_emit(e_instruction__INSTANCE, a_stack + 1)(this);
+	a_emit(a_tail ? e_instruction__CALL_TAIL : e_instruction__CALL, a_stack + 1)(size_t(0));
 }
 
 void t_code::f_scan()
@@ -926,7 +917,7 @@ struct : t_static
 
 struct : t_static
 {
-	struct t_apply : t_with_value<t_object_of<t_apply>, t_holder<t_code>>
+	struct t_instance : t_with_value<t_object_of<t_instance>, t_holder<t_code>>
 	{
 		using t_base::t_base;
 		virtual t_object* f_apply(t_code* a_code, t_object* a_arguments)
@@ -934,15 +925,6 @@ struct : t_static
 			auto& engine = a_code->v_engine;
 			engine.f_run(*v_value, a_arguments);
 			return a_code->f_generate(engine.v_used[0]);
-		}
-	};
-	struct t_instance : t_with_value<t_object_of<t_instance>, t_holder<t_code>>
-	{
-		using t_base::t_base;
-		virtual t_object* f_generate(t_code* a_code)
-		{
-			auto& engine = a_code->v_engine;
-			return engine.f_new<t_apply>(engine.f_pointer(v_value));
 		}
 	};
 
@@ -963,7 +945,7 @@ struct : t_static
 	{
 		auto& engine = a_code->v_engine;
 		auto arguments = engine.f_pointer(a_arguments);
-		auto bound = engine.f_pointer(a_code->f_resolve(f_cast<t_symbol>(f_chop(arguments))));
+		auto bound = engine.f_pointer(a_code->f_generate(f_chop(arguments)));
 		auto value = a_code->f_generate(f_chop(arguments));
 		if (arguments) throw std::runtime_error("must be nil");
 		if (auto p = dynamic_cast<t_mutable*>(static_cast<t_object*>(bound))) return p->f_generate(a_code, value);
@@ -984,8 +966,7 @@ struct : t_static
 		if (dynamic_cast<t_mutable*>(static_cast<t_object*>(bound))) {
 			auto variable = engine.f_pointer(engine.f_new<t_module::t_variable>(nullptr));
 			(*a_code->v_module)->insert_or_assign(symbol, variable);
-			auto value = bound->f_generate(a_code);
-			return variable->f_generate(a_code, value);
+			return variable->f_generate(a_code, bound);
 		}
 		(*a_code->v_module)->insert_or_assign(symbol, bound);
 		return engine.f_new<t_quote>(nullptr);
