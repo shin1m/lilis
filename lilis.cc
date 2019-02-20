@@ -436,7 +436,7 @@ struct t_module : t_bindings
 enum t_instruction
 {
 	e_instruction__POP,
-	e_instruction__INSTANCE,
+	e_instruction__PUSH,
 	e_instruction__GET,
 	e_instruction__SET,
 	e_instruction__CALL,
@@ -663,7 +663,7 @@ struct t_quote : t_with_value<t_object_of<t_quote>, t_object>
 	using t_base::t_base;
 	virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 	{
-		a_emit(e_instruction__INSTANCE, a_stack + 1)(v_value);
+		a_emit(e_instruction__PUSH, a_stack + 1)(v_value);
 	}
 	virtual std::wstring f_string() const
 	{
@@ -711,7 +711,7 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 			++v_context->v_current;
 			--v_used;
 			break;
-		case e_instruction__INSTANCE:
+		case e_instruction__PUSH:
 			*v_used++ = static_cast<t_object*>(*++v_context->v_current);
 			++v_context->v_current;
 			break;
@@ -803,7 +803,7 @@ t_object* t_object::f_apply(t_code* a_code, t_object* a_arguments)
 
 void t_object::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 {
-	a_emit(e_instruction__INSTANCE, a_stack + 1)(this);
+	a_emit(e_instruction__PUSH, a_stack + 1)(this);
 }
 
 t_object* t_symbol::f_generate(t_code* a_code)
@@ -828,7 +828,7 @@ t_object* t_module::t_variable::f_generate(t_code* a_code, t_object* a_expressio
 
 void t_module::t_variable::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 {
-	a_emit(e_instruction__INSTANCE, a_stack + 1)(this);
+	a_emit(e_instruction__PUSH, a_stack + 1)(this);
 	a_emit(a_tail ? e_instruction__CALL_TAIL : e_instruction__CALL, a_stack + 1)(size_t(0));
 }
 
@@ -861,7 +861,7 @@ void t_code::f_compile(t_object* a_source)
 			emit(e_instruction__POP, 0);
 		}
 	else
-		emit(e_instruction__INSTANCE, 1)(static_cast<t_object*>(nullptr));
+		emit(e_instruction__PUSH, 1)(static_cast<t_object*>(nullptr));
 	emit(e_instruction__RETURN, 0);
 	for (auto& x : emit.v_labels) {
 		auto p = v_instructions.data() + x.v_target;
@@ -1017,7 +1017,7 @@ struct : t_static
 			if (v_false)
 				v_false->f_emit(a_emit, a_stack, a_tail);
 			else
-				a_emit(e_instruction__INSTANCE, a_stack + 1)(static_cast<t_object*>(nullptr));
+				a_emit(e_instruction__PUSH, a_stack + 1)(static_cast<t_object*>(nullptr));
 			label1.v_target = a_emit.v_code->v_instructions.size();
 		}
 	};
