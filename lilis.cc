@@ -1086,6 +1086,103 @@ struct : t_static
 	}
 } v_cdr;
 
+struct t_unquote : t_with_value<t_object_of<t_unquote>, t_object>
+{
+	using t_base::t_base;
+	virtual std::wstring f_string() const
+	{
+		return L',' + lilis::f_string(v_value);
+	}
+};
+
+struct t_unquote_splicing : t_unquote
+{
+	using t_unquote::t_unquote;
+	virtual std::wstring f_string() const
+	{
+		return L",@" + lilis::f_string(v_value);
+	}
+};
+
+struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
+{
+	inline static struct : t_static
+	{
+		static t_object* f_append(t_engine& a_engine, t_object* a_list, t_object* a_tail)
+		{
+			if (!a_list) return a_tail;
+			auto tail = a_engine.f_pointer(a_tail);
+			auto pair = a_engine.f_pointer(f_cast<t_pair>(a_list));
+			auto list = a_engine.f_pointer(a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr));
+			auto last = a_engine.f_pointer(static_cast<t_pair*>(list));
+			do {
+				pair = f_cast<t_pair>(pair->v_tail);
+				auto p = a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr);
+				last->v_tail = p;
+				last = p;
+			} while (pair->v_tail);
+			last->v_tail = tail;
+			return list;
+		}
+
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
+		{
+			if (a_arguments != 2) throw std::runtime_error("requires two arguments");
+			auto used = a_engine.v_used - 2;
+			used[-1] = f_append(a_engine, used[0], used[1]);
+			a_engine.v_used = used;
+		}
+	} v_append;
+	inline static struct : t_static
+	{
+		virtual void f_call(t_engine& a_engine, size_t a_arguments)
+		{
+			if (a_arguments != 1) throw std::runtime_error("requires an argument");
+			a_engine.v_used[-2] = a_engine.f_new<t_quote>(a_engine.v_used[-1]);
+			--a_engine.v_used;
+		}
+	} v_quote;
+
+	static t_object* f_expand(t_code* a_code, t_object* a_value)
+	{
+		auto& engine = a_code->v_engine;
+		if (auto p = dynamic_cast<t_pair*>(a_value)) {
+			auto pair = engine.f_pointer(p);
+			auto call = engine.f_pointer<t_call>(nullptr);
+			if (auto p = dynamic_cast<t_unquote_splicing*>(pair->v_head)) {
+				auto head = engine.f_pointer(a_code->f_generate(p->v_value));
+				call = engine.f_new<t_call>(&v_append);
+				call->v_arguments.push_back(head);
+			} else {
+				call = engine.f_new<t_call>(&v_cons);
+				auto head = f_expand(a_code, pair->v_head);
+				call->v_arguments.push_back(head);
+			}
+			auto tail = f_expand(a_code, pair->v_tail);
+			call->v_arguments.push_back(tail);
+			return call;
+		}
+		if (auto p = dynamic_cast<t_quote*>(a_value)) {
+			auto value = engine.f_pointer(f_expand(a_code, p->v_value));
+			auto call = engine.f_new<t_call>(&v_quote);
+			call->v_arguments.push_back(value);
+			return call;
+		}
+		if (auto p = dynamic_cast<t_unquote*>(a_value)) return a_code->f_generate(p->v_value);
+		return engine.f_new<t_quote>(engine.f_pointer(a_value));
+	}
+
+	using t_base::t_base;
+	virtual t_object* f_generate(t_code* a_code)
+	{
+		return f_expand(a_code, v_value);
+	}
+	virtual std::wstring f_string() const
+	{
+		return L'`' + lilis::f_string(v_value);
+	}
+};
+
 struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
@@ -1374,14 +1471,14 @@ t_object* t_parser<T_get>::f_expression()
 		f_get();
 		if (v_c == L'@') {
 			f_next();
-			return nullptr;
+			return v_engine.f_new<t_unquote_splicing>(v_engine.f_pointer(f_expression()));
 		} else {
 			f_skip();
-			return nullptr;
+			return v_engine.f_new<t_unquote>(v_engine.f_pointer(f_expression()));
 		}
 	case L'`':
 		f_next();
-		return nullptr;
+		return v_engine.f_new<t_quasiquote>(v_engine.f_pointer(f_expression()));
 	default:
 		if (std::iswdigit(v_c)) {
 			std::vector<wchar_t> cs;

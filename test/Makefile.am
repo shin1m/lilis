@@ -8,6 +8,7 @@ scripts = \
 	condition.lisp \
 	set.lisp \
 	import.lisp \
+	quasiquote.lisp \
 	boolean-test.lisp \
 	peano-test.lisp \
 	fibonacci.lisp \
