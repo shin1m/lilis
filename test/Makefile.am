@@ -7,6 +7,7 @@ scripts = \
 	macro.lisp \
 	condition.lisp \
 	set.lisp \
+	rest.lisp \
 	import.lisp \
 	quasiquote.lisp \
 	boolean-test.lisp \

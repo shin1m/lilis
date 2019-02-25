@@ -443,6 +443,7 @@ enum t_instruction
 	e_instruction__CALL_TAIL,
 	e_instruction__RETURN,
 	e_instruction__LAMBDA,
+	e_instruction__LAMBDA_WITH_REST,
 	e_instruction__JUMP,
 	e_instruction__BRANCH,
 	e_instruction__END
@@ -494,7 +495,8 @@ struct t_code
 	t_holder<t_module>* v_module;
 	std::vector<t_holder<t_module>*> v_imports;
 	std::vector<t_symbol*> v_locals;
-	size_t v_arguments;
+	size_t v_arguments = 0;
+	bool v_rest = false;
 	t_bindings v_bindings;
 	std::vector<void*> v_instructions;
 	std::vector<size_t> v_objects;
@@ -515,7 +517,7 @@ struct t_code
 		}
 	}
 	void f_compile(t_object* a_source);
-	void f_call(t_scope* a_outer, size_t a_arguments);
+	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments);
 };
 
 struct t_context
@@ -537,13 +539,23 @@ inline t_engine::t_engine(bool a_debug, bool a_verbose) : v_contexts(new t_conte
 	v_global = f_new<t_holder<t_module>>(*this, std::filesystem::path{});
 }
 
-inline void t_code::f_call(t_scope* a_outer, size_t a_arguments)
+inline void t_code::f_call(bool a_rest, t_scope* a_outer, size_t a_arguments)
 {
-	if (a_arguments != v_arguments) throw std::runtime_error("wrong number of arguments");
+	if (a_rest) {
+		if (a_arguments < v_arguments) throw std::runtime_error("too few arguments");
+	} else {
+		if (a_arguments != v_arguments) throw std::runtime_error("wrong number of arguments");
+	}
 	auto scope = v_engine.f_pointer(a_outer);
 	auto p = v_engine.f_allocate(sizeof(t_scope) + sizeof(t_object) * v_locals.size());
-	v_engine.v_used -= v_arguments;
-	scope = new(p) t_scope(scope, v_locals.size(), v_engine.v_used, v_arguments);
+	auto used = v_engine.v_used - a_arguments;
+	scope = new(p) t_scope(scope, v_locals.size(), used, v_arguments);
+	if (a_rest) {
+		auto tail = v_engine.f_pointer(scope->f_locals()[v_arguments]);
+		for (auto p = used + v_arguments; v_engine.v_used != p; --v_engine.v_used)
+			tail = scope->f_locals()[v_arguments] = v_engine.f_new<t_pair>(v_engine.v_used[-1], tail);
+	}
+	v_engine.v_used = used;
 	if (v_engine.v_context <= v_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
 	--v_engine.v_context;
 	v_engine.v_context->v_stack = --v_engine.v_used;
@@ -569,7 +581,16 @@ struct t_lambda : t_object_of<t_lambda>
 	}
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		(*v_code)->f_call(v_scope, a_arguments);
+		(*v_code)->f_call(false, v_scope, a_arguments);
+	}
+};
+
+struct t_lambda_with_rest : t_lambda
+{
+	using t_lambda::t_lambda;
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		(*v_code)->f_call(true, v_scope, a_arguments);
 	}
 };
 
@@ -703,7 +724,7 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 	{
 		auto p = v_used;
 		for (auto x = f_pointer(a_arguments); x;) *v_used++ = f_chop(x);
-		a_code->f_call(nullptr, v_used - p);
+		a_code->f_call(false, nullptr, v_used - p);
 	}
 	while (true) {
 		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_context->v_current))) {
@@ -760,6 +781,10 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 			break;
 		case e_instruction__LAMBDA:
 			*v_used++ = f_new<t_lambda>(*reinterpret_cast<t_holder<t_code>**>(++v_context->v_current), v_context->v_scope);
+			++v_context->v_current;
+			break;
+		case e_instruction__LAMBDA_WITH_REST:
+			*v_used++ = f_new<t_lambda_with_rest>(*reinterpret_cast<t_holder<t_code>**>(++v_context->v_current), v_context->v_scope);
 			++v_context->v_current;
 			break;
 		case e_instruction__JUMP:
@@ -848,11 +873,17 @@ void t_code::f_compile(t_object* a_source)
 	auto body = v_engine.f_pointer(a_source);
 	if (v_outer)
 		for (auto arguments = v_engine.f_pointer(f_chop(body)); arguments;) {
-			auto symbol = v_engine.f_pointer(f_cast<t_symbol>(f_chop(arguments)));
+			auto symbol = v_engine.f_pointer(dynamic_cast<t_symbol*>(static_cast<t_object*>(arguments)));
+			if (symbol) {
+				v_rest = true;
+				arguments = nullptr;
+			} else {
+				symbol = f_cast<t_symbol>(f_chop(arguments));
+				++v_arguments;
+			}
 			v_bindings.emplace(symbol, v_engine.f_new<t_local>(v_this, v_locals.size()));
 			v_locals.push_back(symbol);
 		}
-	v_arguments = v_locals.size();
 	t_emit emit{this};
 	if (body)
 		while (true) {
@@ -884,7 +915,7 @@ struct : t_static
 		using t_base::t_base;
 		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 		{
-			a_emit(e_instruction__LAMBDA, a_stack + 1)(v_value);
+			a_emit((*v_value)->v_rest ? e_instruction__LAMBDA_WITH_REST : e_instruction__LAMBDA, a_stack + 1)(v_value);
 		}
 	};
 
@@ -1114,7 +1145,7 @@ struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 			auto tail = a_engine.f_pointer(a_tail);
 			auto pair = a_engine.f_pointer(f_cast<t_pair>(a_list));
 			auto list = a_engine.f_pointer(a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr));
-			auto last = a_engine.f_pointer(static_cast<t_pair*>(list));
+			auto last = a_engine.f_pointer<t_pair>(list);
 			do {
 				pair = f_cast<t_pair>(pair->v_tail);
 				auto p = a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr);
@@ -1374,11 +1405,15 @@ struct t_parser
 		f_next();
 		auto head = v_engine.f_pointer<t_pair>(nullptr);
 		if (v_c != L')') {
-			if (v_c == WEOF) throw t_error("unexpected end of file", v_at);
 			head = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
 			auto tail = v_engine.f_pointer<t_pair>(head);
 			while (v_c != L')') {
-				if (v_c == WEOF) throw t_error("unexpected end of file", v_at);
+				if (v_c == L'.') {
+					f_next();
+					tail->v_tail = f_expression();
+					if (v_c != L')') throw t_error("must be ')'", v_at);
+					break;
+				}
 				auto p = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
 				tail->v_tail = p;
 				tail = p;
@@ -1397,7 +1432,7 @@ struct t_parser
 	{
 		if (v_c == WEOF) return nullptr;
 		auto head = v_engine.f_pointer(v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr));
-		auto tail = v_engine.f_pointer(&*head);
+		auto tail = v_engine.f_pointer<t_pair>(head);
 		while (v_c != WEOF) {
 			auto p = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
 			tail->v_tail = p;
@@ -1411,6 +1446,8 @@ template<typename T_get>
 t_object* t_parser<T_get>::f_expression()
 {
 	switch (v_c) {
+	case WEOF:
+		throw t_error("unexpected end of file", v_at);
 	case L'"':
 		{
 			f_get();
