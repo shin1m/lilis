@@ -242,6 +242,7 @@ struct t_engine : t_root
 	}
 	virtual void f_scan(t_engine& a_engine);
 	t_symbol* f_symbol(std::wstring_view a_name);
+	size_t f_expand(size_t a_arguments);
 	void f_run(t_code* a_code, t_object* a_arguments);
 	t_pair* f_parse(const char* a_path);
 	void f_run(t_holder<t_module>* a_module, t_pair* a_expressions);
@@ -440,7 +441,9 @@ enum t_instruction
 	e_instruction__GET,
 	e_instruction__SET,
 	e_instruction__CALL,
+	e_instruction__CALL_WITH_EXPANSION,
 	e_instruction__CALL_TAIL,
+	e_instruction__CALL_TAIL_WITH_EXPANSION,
 	e_instruction__RETURN,
 	e_instruction__LAMBDA,
 	e_instruction__LAMBDA_WITH_REST,
@@ -661,6 +664,7 @@ struct t_call : t_object_of<t_call>
 {
 	t_object* v_callee;
 	std::vector<t_object*> v_arguments;
+	bool v_expand = false;
 
 	t_call(t_object* a_callee) : v_callee(a_callee)
 	{
@@ -675,7 +679,9 @@ struct t_call : t_object_of<t_call>
 		v_callee->f_emit(a_emit, a_stack, false);
 		auto n = a_stack;
 		for (auto p : v_arguments) p->f_emit(a_emit, ++n, false);
-		a_emit(a_tail ? e_instruction__CALL_TAIL : e_instruction__CALL, a_stack + 1)(v_arguments.size());
+		int instruction = v_expand ? e_instruction__CALL_WITH_EXPANSION : e_instruction__CALL;
+		if (a_tail) instruction += e_instruction__CALL_TAIL - e_instruction__CALL;
+		a_emit(static_cast<t_instruction>(instruction), a_stack + 1)(v_arguments.size());
 	}
 };
 
@@ -710,6 +716,21 @@ t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 	if (i != v_symbols.end() && i->first == a_name) return i->second;
 	i = v_symbols.emplace_hint(i, a_name, nullptr);
 	return i->second = f_new<t_symbol>(i);
+}
+
+size_t t_engine::f_expand(size_t a_arguments)
+{
+	--a_arguments;
+	if (auto last = *--v_used)
+		while (true) {
+			auto pair = f_cast<t_pair>(last);
+			*v_used++ = pair->v_head;
+			last = pair->v_tail;
+			++a_arguments;
+			if (!last) break;
+			if (v_used >= v_stack.get() + V_STACK) throw std::runtime_error("stack overflow");
+		}
+	return a_arguments;
 }
 
 void t_engine::f_run(t_code* a_code, t_object* a_arguments)
@@ -765,6 +786,15 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 				callee->f_call(*this, arguments);
 			}
 			break;
+		case e_instruction__CALL_WITH_EXPANSION:
+			{
+				auto arguments = reinterpret_cast<size_t>(*++v_context->v_current);
+				++v_context->v_current;
+				auto callee = v_used[-1 - arguments];
+				if (!callee) throw std::runtime_error("calling nil");
+				callee->f_call(*this, f_expand(arguments));
+			}
+			break;
 		case e_instruction__CALL_TAIL:
 			{
 				auto arguments = reinterpret_cast<size_t>(*++v_context->v_current);
@@ -772,6 +802,15 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 				auto callee = *v_context++->v_stack;
 				if (!callee) throw std::runtime_error("calling nil");
 				callee->f_call(*this, arguments);
+			}
+			break;
+		case e_instruction__CALL_TAIL_WITH_EXPANSION:
+			{
+				auto arguments = reinterpret_cast<size_t>(*++v_context->v_current);
+				v_used = std::copy(v_used - arguments - 1, v_used, v_context->v_stack);
+				auto callee = *v_context++->v_stack;
+				if (!callee) throw std::runtime_error("calling nil");
+				callee->f_call(*this, f_expand(arguments));
 			}
 			break;
 		case e_instruction__RETURN:
@@ -819,9 +858,15 @@ t_object* t_object::f_apply(t_code* a_code, t_object* a_arguments)
 	auto& engine = a_code->v_engine;
 	auto arguments = engine.f_pointer(a_arguments);
 	auto call = engine.f_pointer(engine.f_new<t_call>(engine.f_pointer(this)));
-	while (arguments) {
-		auto argument = a_code->f_generate(f_chop(arguments));
+	while (auto pair = dynamic_cast<t_pair*>(static_cast<t_object*>(arguments))) {
+		arguments = pair->v_tail;
+		auto argument = a_code->f_generate(pair->v_head);
 		call->v_arguments.push_back(argument);
+	}
+	if (arguments) {
+		auto argument = arguments->f_generate(a_code);
+		call->v_arguments.push_back(argument);
+		call->v_expand = true;
 	}
 	return call;
 }
@@ -846,9 +891,9 @@ t_object* t_module::t_variable::f_generate(t_code* a_code, t_object* a_expressio
 {
 	auto& engine = a_code->v_engine;
 	auto expression = engine.f_pointer(a_expression);
-	auto p = engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_quote>(engine.f_pointer(this))));
-	p->v_arguments.push_back(expression);
-	return p;
+	auto call = engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_quote>(engine.f_pointer(this))));
+	call->v_arguments.push_back(expression);
+	return call;
 }
 
 void t_module::t_variable::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
