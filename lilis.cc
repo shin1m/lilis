@@ -744,8 +744,15 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 	*v_used++ = nullptr;
 	{
 		auto p = v_used;
-		for (auto x = f_pointer(a_arguments); x;) *v_used++ = f_chop(x);
-		a_code->f_call(false, nullptr, v_used - p);
+		while (auto pair = dynamic_cast<t_pair*>(a_arguments)) {
+			*v_used++ = pair->v_head;
+			a_arguments = pair->v_tail;
+		}
+		if (a_arguments) {
+			*v_used++ = a_arguments;
+			f_expand(v_used - p);
+		}
+		a_code->f_call(a_code->v_rest, nullptr, v_used - p);
 	}
 	while (true) {
 		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_context->v_current))) {
@@ -1011,7 +1018,7 @@ struct : t_static
 		auto symbol = engine.f_pointer(f_cast<t_symbol>(f_chop(arguments)));
 		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
 		(*code)->f_compile(arguments);
-		return a_code->v_bindings.emplace(symbol, engine.f_new<t_instance>(code)).first->second;
+		return a_code->v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(code)).first->second;
 	}
 } v_macro;
 
