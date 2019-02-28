@@ -1000,6 +1000,20 @@ struct : t_static
 
 struct : t_static
 {
+	virtual t_object* f_apply(t_code* a_code, t_object* a_arguments)
+	{
+		auto& engine = a_code->v_engine;
+		auto arguments = engine.f_pointer(a_arguments);
+		auto bound = engine.f_pointer(a_code->f_generate(f_chop(arguments)));
+		auto value = a_code->f_generate(f_chop(arguments));
+		if (arguments) throw std::runtime_error("must be nil");
+		if (auto p = dynamic_cast<t_mutable*>(static_cast<t_object*>(bound))) return p->f_generate(a_code, value);
+		throw std::runtime_error("not mutable");
+	}
+} v_set;
+
+struct : t_static
+{
 	struct t_instance : t_with_value<t_object_of<t_instance>, t_holder<t_code>>
 	{
 		using t_base::t_base;
@@ -1021,20 +1035,6 @@ struct : t_static
 		return a_code->v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(code)).first->second;
 	}
 } v_macro;
-
-struct : t_static
-{
-	virtual t_object* f_apply(t_code* a_code, t_object* a_arguments)
-	{
-		auto& engine = a_code->v_engine;
-		auto arguments = engine.f_pointer(a_arguments);
-		auto bound = engine.f_pointer(a_code->f_generate(f_chop(arguments)));
-		auto value = a_code->f_generate(f_chop(arguments));
-		if (arguments) throw std::runtime_error("must be nil");
-		if (auto p = dynamic_cast<t_mutable*>(static_cast<t_object*>(bound))) return p->f_generate(a_code, value);
-		throw std::runtime_error("not mutable");
-	}
-} v_set;
 
 struct : t_static
 {
@@ -1265,6 +1265,32 @@ struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 		return L'`' + lilis::f_string(v_value);
 	}
 };
+
+struct : t_static
+{
+	struct t_instance : t_symbol
+	{
+		t_instance() : t_symbol({})
+		{
+		}
+		virtual void f_scan(t_engine& a_engine)
+		{
+		}
+		virtual void f_destruct(t_engine& a_engine)
+		{
+		}
+		virtual std::wstring f_string() const
+		{
+			return t_object::f_string();
+		}
+	};
+
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		if (a_arguments > 0) throw std::runtime_error("requires no arguments");
+		a_engine.v_used[-1] = a_engine.f_new<t_instance>();
+	}
+} v_gensym;
 
 struct : t_static
 {
@@ -1725,9 +1751,9 @@ int main(int argc, char* argv[])
 	{
 		auto global = *engine.v_global;
 		global->f_register(L"lambda"sv, &v_lambda);
-		global->f_register(L"define-macro"sv, &v_macro);
 		global->f_register(L"define"sv, &v_define);
 		global->f_register(L"set!"sv, &v_set);
+		global->f_register(L"define-macro"sv, &v_macro);
 		global->f_register(L"export"sv, &v_export);
 		global->f_register(L"import"sv, &v_import);
 		global->f_register(L"if"sv, &v_if);
@@ -1736,6 +1762,7 @@ int main(int argc, char* argv[])
 		global->f_register(L"cons"sv, &v_cons);
 		global->f_register(L"car"sv, &v_car);
 		global->f_register(L"cdr"sv, &v_cdr);
+		global->f_register(L"gensym"sv, &v_gensym);
 		global->f_register(L"print"sv, &v_print);
 		global->f_register(L"call-with-prompt"sv, &prompt::v_call);
 		global->f_register(L"abort-to-prompt"sv, &prompt::v_abort);

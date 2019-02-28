@@ -4,12 +4,13 @@ AM_LISP_LOG_FLAGS = --debug --verbose
 REPL_LOG_COMPILER = $(srcdir)/run-repl $(top_builddir)/lilis
 scripts = \
 	hello.lisp \
-	macro.lisp \
 	condition.lisp \
 	set.lisp \
 	rest.lisp \
 	import.lisp \
 	quasiquote.lisp \
+	macro.lisp \
+	gensym.lisp \
 	boolean-test.lisp \
 	peano-test.lisp \
 	fibonacci.lisp \
