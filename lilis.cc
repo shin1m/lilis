@@ -434,6 +434,29 @@ struct t_module : t_bindings
 	}
 };
 
+template<typename T, typename U>
+inline T* f_cast(U* a_p)
+{
+	auto p = dynamic_cast<T*>(a_p);
+	if (!p)
+		throw std::runtime_error("must be "s + typeid(T).name());
+	return p;
+}
+
+inline t_object* f_chop(t_pointer<t_object>& a_p)
+{
+	auto pair = f_cast<t_pair>(static_cast<t_object*>(a_p));
+	auto p = pair->v_head;
+	a_p = pair->v_tail;
+	return p;
+}
+
+inline void f_push(t_engine& a_engine, t_pointer<t_pair>& a_p, t_object* a_value) {
+	auto p = a_engine.f_new<t_pair>(a_engine.f_pointer(a_value), nullptr);
+	a_p->v_tail = p;
+	a_p = p;
+}
+
 enum t_instruction
 {
 	e_instruction__POP,
@@ -519,7 +542,26 @@ struct t_code
 			if (!code->v_outer) throw std::runtime_error("not found");
 		}
 	}
-	void f_compile(t_object* a_source);
+	void f_compile(t_pair* a_body);
+	t_holder<t_code>* f_new(t_object* a_body)
+	{
+		auto body = v_engine.f_pointer(a_body);
+		auto code = v_engine.f_pointer(v_engine.f_new<t_holder<t_code>>(v_engine, v_this, nullptr));
+		for (auto arguments = v_engine.f_pointer(f_chop(body)); arguments;) {
+			auto symbol = v_engine.f_pointer(dynamic_cast<t_symbol*>(static_cast<t_object*>(arguments)));
+			if (symbol) {
+				(*code)->v_rest = true;
+				arguments = nullptr;
+			} else {
+				symbol = f_cast<t_symbol>(f_chop(arguments));
+				++(*code)->v_arguments;
+			}
+			(*code)->v_bindings.emplace(symbol, v_engine.f_new<t_local>(code, (*code)->v_locals.size()));
+			(*code)->v_locals.push_back(symbol);
+		}
+		(*code)->f_compile(body ? f_cast<t_pair>(static_cast<t_object*>(body)) : nullptr);
+		return code;
+	}
 	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments);
 };
 
@@ -597,23 +639,6 @@ struct t_lambda_with_rest : t_lambda
 	}
 };
 
-template<typename T, typename U>
-inline T* f_cast(U* a_p)
-{
-	auto p = dynamic_cast<T*>(a_p);
-	if (!p)
-		throw std::runtime_error("must be "s + typeid(T).name());
-	return p;
-}
-
-inline t_object* f_chop(t_pointer<t_object>& a_p)
-{
-	auto pair = f_cast<t_pair>(static_cast<t_object*>(a_p));
-	auto p = pair->v_head;
-	a_p = pair->v_tail;
-	return p;
-}
-
 struct t_emit
 {
 	struct t_label : std::vector<size_t>
@@ -660,28 +685,19 @@ void t_code::t_local::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 	a_emit(e_instruction__GET, a_stack + 1)(f_outer(a_emit.v_code))(v_index);
 }
 
-struct t_call : t_object_of<t_call>
+struct t_call : t_with_value<t_object_of<t_call>, t_pair>
 {
-	t_object* v_callee;
-	std::vector<t_object*> v_arguments;
 	bool v_expand = false;
 
-	t_call(t_object* a_callee) : v_callee(a_callee)
-	{
-	}
-	virtual void f_scan(t_engine& a_engine)
-	{
-		v_callee = a_engine.f_forward(v_callee);
-		for (auto& x : v_arguments) x = a_engine.f_forward(x);
-	}
+	using t_base::t_base;
 	virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 	{
-		v_callee->f_emit(a_emit, a_stack, false);
+		v_value->v_head->f_emit(a_emit, a_stack, false);
 		auto n = a_stack;
-		for (auto p : v_arguments) p->f_emit(a_emit, ++n, false);
+		for (auto p = static_cast<t_pair*>(v_value->v_tail); p; p = static_cast<t_pair*>(p->v_tail)) p->v_head->f_emit(a_emit, ++n, false);
 		int instruction = v_expand ? e_instruction__CALL_WITH_EXPANSION : e_instruction__CALL;
 		if (a_tail) instruction += e_instruction__CALL_TAIL - e_instruction__CALL;
-		a_emit(static_cast<t_instruction>(instruction), a_stack + 1)(v_arguments.size());
+		a_emit(static_cast<t_instruction>(instruction), a_stack + 1)(n - a_stack);
 	}
 };
 
@@ -864,15 +880,14 @@ t_object* t_object::f_apply(t_code* a_code, t_object* a_arguments)
 {
 	auto& engine = a_code->v_engine;
 	auto arguments = engine.f_pointer(a_arguments);
-	auto call = engine.f_pointer(engine.f_new<t_call>(engine.f_pointer(this)));
+	auto last = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(this), nullptr));
+	auto call = engine.f_pointer(engine.f_new<t_call>(last));
 	while (auto pair = dynamic_cast<t_pair*>(static_cast<t_object*>(arguments))) {
 		arguments = pair->v_tail;
-		auto argument = a_code->f_generate(pair->v_head);
-		call->v_arguments.push_back(argument);
+		f_push(engine, last, a_code->f_generate(pair->v_head));
 	}
 	if (arguments) {
-		auto argument = arguments->f_generate(a_code);
-		call->v_arguments.push_back(argument);
+		f_push(engine, last, arguments->f_generate(a_code));
 		call->v_expand = true;
 	}
 	return call;
@@ -897,10 +912,12 @@ t_object* t_pair::f_generate(t_code* a_code)
 t_object* t_module::t_variable::f_generate(t_code* a_code, t_object* a_expression)
 {
 	auto& engine = a_code->v_engine;
+	auto thiz = engine.f_pointer(this);
 	auto expression = engine.f_pointer(a_expression);
-	auto call = engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_quote>(engine.f_pointer(this))));
-	call->v_arguments.push_back(expression);
-	return call;
+	return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(
+		engine.f_pointer(engine.f_new<t_quote>(thiz)),
+		engine.f_pointer(engine.f_new<t_pair>(expression, nullptr))
+	)));
 }
 
 void t_module::t_variable::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
@@ -920,31 +937,19 @@ void t_code::f_scan()
 	for (auto i : v_objects) v_instructions[i] = v_engine.f_forward(static_cast<t_object*>(v_instructions[i]));
 }
 
-void t_code::f_compile(t_object* a_source)
+void t_code::f_compile(t_pair* a_body)
 {
-	auto body = v_engine.f_pointer(a_source);
-	if (v_outer)
-		for (auto arguments = v_engine.f_pointer(f_chop(body)); arguments;) {
-			auto symbol = v_engine.f_pointer(dynamic_cast<t_symbol*>(static_cast<t_object*>(arguments)));
-			if (symbol) {
-				v_rest = true;
-				arguments = nullptr;
-			} else {
-				symbol = f_cast<t_symbol>(f_chop(arguments));
-				++v_arguments;
-			}
-			v_bindings.emplace(symbol, v_engine.f_new<t_local>(v_this, v_locals.size()));
-			v_locals.push_back(symbol);
-		}
 	t_emit emit{this};
-	if (body)
-		while (true) {
-			f_generate(f_chop(body))->f_emit(emit, 1, !body);
-			if (!body) break;
+	if (a_body) {
+		auto body = v_engine.f_pointer(a_body);
+		for (; body->v_tail; body = f_cast<t_pair>(body->v_tail)) {
+			f_generate(body->v_head)->f_emit(emit, 0, false);
 			emit(e_instruction__POP, 0);
 		}
-	else
+		f_generate(body->v_head)->f_emit(emit, 0, true);
+	} else {
 		emit(e_instruction__PUSH, 1)(static_cast<t_object*>(nullptr));
+	}
 	emit(e_instruction__RETURN, 0);
 	for (auto& x : emit.v_labels) {
 		auto p = v_instructions.data() + x.v_target;
@@ -974,12 +979,37 @@ struct : t_static
 	virtual t_object* f_apply(t_code* a_code, t_object* a_arguments)
 	{
 		auto& engine = a_code->v_engine;
-		auto arguments = engine.f_pointer(a_arguments);
-		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
-		(*code)->f_compile(arguments);
-		return engine.f_new<t_instantiate>(code);
+		return engine.f_new<t_instantiate>(engine.f_pointer(a_code->f_new(a_arguments)));
 	}
 } v_lambda;
+
+struct : t_static
+{
+	struct t_instance : t_with_value<t_object_of<t_instance>, t_pair>
+	{
+		using t_base::t_base;
+		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
+		{
+			auto body = a_emit.v_code->v_engine.f_pointer(v_value);
+			for (; body->v_tail; body = f_cast<t_pair>(body->v_tail)) {
+				body->v_head->f_emit(a_emit, a_stack, false);
+				a_emit(e_instruction__POP, a_stack);
+			}
+			body->v_head->f_emit(a_emit, a_stack, a_tail);
+		}
+	};
+
+	virtual t_object* f_apply(t_code* a_code, t_object* a_arguments)
+	{
+		auto& engine = a_code->v_engine;
+		if (!a_arguments) return engine.f_new<t_quote>(nullptr);
+		auto body = engine.f_pointer(a_arguments);
+		auto last = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code->f_generate(f_chop(body))), nullptr));
+		auto block = engine.f_pointer(engine.f_new<t_instance>(last));
+		while (body) f_push(engine, last, a_code->f_generate(f_chop(body)));
+		return block;
+	}
+} v_begin;
 
 struct : t_static
 {
@@ -1030,9 +1060,7 @@ struct : t_static
 		auto& engine = a_code->v_engine;
 		auto arguments = engine.f_pointer(a_arguments);
 		auto symbol = engine.f_pointer(f_cast<t_symbol>(f_chop(arguments)));
-		auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, a_code->v_this, nullptr));
-		(*code)->f_compile(arguments);
-		return a_code->v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(code)).first->second;
+		return a_code->v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(engine.f_pointer(a_code->f_new(arguments)))).first->second;
 	}
 } v_macro;
 
@@ -1200,9 +1228,7 @@ struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 			auto last = a_engine.f_pointer<t_pair>(list);
 			do {
 				pair = f_cast<t_pair>(pair->v_tail);
-				auto p = a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr);
-				last->v_tail = p;
-				last = p;
+				f_push(a_engine, last, pair->v_head);
 			} while (pair->v_tail);
 			last->v_tail = tail;
 			return list;
@@ -1231,26 +1257,20 @@ struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 		auto& engine = a_code->v_engine;
 		if (auto p = dynamic_cast<t_pair*>(a_value)) {
 			auto pair = engine.f_pointer(p);
-			auto call = engine.f_pointer<t_call>(nullptr);
-			if (auto p = dynamic_cast<t_unquote_splicing*>(pair->v_head)) {
-				auto head = engine.f_pointer(a_code->f_generate(p->v_value));
-				call = engine.f_new<t_call>(&v_append);
-				call->v_arguments.push_back(head);
-			} else {
-				call = engine.f_new<t_call>(&v_cons);
-				auto head = f_expand(a_code, pair->v_head);
-				call->v_arguments.push_back(head);
-			}
-			auto tail = f_expand(a_code, pair->v_tail);
-			call->v_arguments.push_back(tail);
-			return call;
+			auto tail = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_expand(a_code, pair->v_tail)), nullptr));
+			if (auto p = dynamic_cast<t_unquote_splicing*>(pair->v_head))
+				return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_append,
+					engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code->f_generate(p->v_value)), tail))
+				)));
+			else
+				return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_cons,
+					engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_expand(a_code, pair->v_head)), tail))
+				)));
 		}
-		if (auto p = dynamic_cast<t_quote*>(a_value)) {
-			auto value = engine.f_pointer(f_expand(a_code, p->v_value));
-			auto call = engine.f_new<t_call>(&v_quote);
-			call->v_arguments.push_back(value);
-			return call;
-		}
+		if (auto p = dynamic_cast<t_quote*>(a_value))
+			return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_quote,
+				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_expand(a_code, p->v_value)), nullptr))
+			)));
 		if (auto p = dynamic_cast<t_unquote*>(a_value)) return a_code->f_generate(p->v_value);
 		return engine.f_new<t_quote>(engine.f_pointer(a_value));
 	}
@@ -1481,24 +1501,22 @@ struct t_parser
 	t_pair* f_list()
 	{
 		f_next();
-		auto head = v_engine.f_pointer<t_pair>(nullptr);
+		auto list = v_engine.f_pointer<t_pair>(nullptr);
 		if (v_c != L')') {
-			head = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
-			auto tail = v_engine.f_pointer<t_pair>(head);
+			list = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
+			auto last = v_engine.f_pointer<t_pair>(list);
 			while (v_c != L')') {
 				if (v_c == L'.') {
 					f_next();
-					tail->v_tail = f_expression();
+					last->v_tail = f_expression();
 					if (v_c != L')') throw t_error("must be ')'", v_at);
 					break;
 				}
-				auto p = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
-				tail->v_tail = p;
-				tail = p;
+				f_push(v_engine, last, f_expression());
 			}
 		}
 		f_next();
-		return head;
+		return list;
 	}
 
 	t_parser(t_engine& a_engine, T_get&& a_get) : v_engine(a_engine), v_get(std::forward<T_get>(a_get))
@@ -1509,14 +1527,10 @@ struct t_parser
 	t_pair* operator()()
 	{
 		if (v_c == WEOF) return nullptr;
-		auto head = v_engine.f_pointer(v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr));
-		auto tail = v_engine.f_pointer<t_pair>(head);
-		while (v_c != WEOF) {
-			auto p = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
-			tail->v_tail = p;
-			tail = p;
-		}
-		return head;
+		auto list = v_engine.f_pointer(v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr));
+		auto last = v_engine.f_pointer<t_pair>(list);
+		while (v_c != WEOF) f_push(v_engine, last, f_expression());
+		return list;
 	}
 };
 
@@ -1751,6 +1765,7 @@ int main(int argc, char* argv[])
 	{
 		auto global = *engine.v_global;
 		global->f_register(L"lambda"sv, &v_lambda);
+		global->f_register(L"begin"sv, &v_begin);
 		global->f_register(L"define"sv, &v_define);
 		global->f_register(L"set!"sv, &v_set);
 		global->f_register(L"define-macro"sv, &v_macro);

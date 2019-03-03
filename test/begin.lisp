@@ -1,0 +1,8 @@
+(import assert)
+(print-assert-equal (begin) ())
+(print-assert-equal (begin ()) ())
+(print-assert-equal (begin 'x) 'x)
+(print-assert-equal (begin 'x 'y) 'y)
+(print-assert-equal (begin 'x (begin)) ())
+(print-assert-equal (begin 'x (begin ())) ())
+(print-assert-equal (begin 'x (begin 'y)) 'y)

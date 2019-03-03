@@ -6,6 +6,7 @@ scripts = \
 	hello.lisp \
 	condition.lisp \
 	set.lisp \
+	begin.lisp \
 	rest.lisp \
 	import.lisp \
 	quasiquote.lisp \
