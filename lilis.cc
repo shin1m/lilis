@@ -1,6 +1,6 @@
 #include <algorithm>
-#include <deque>
 #include <filesystem>
+#include <list>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -646,7 +646,7 @@ struct t_emit
 	};
 
 	t_code* v_code;
-	std::deque<t_label> v_labels;
+	std::list<t_label> v_labels;
 
 	t_emit& operator()(t_instruction a_instruction, size_t a_stack)
 	{
