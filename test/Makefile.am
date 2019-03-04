@@ -11,6 +11,8 @@ scripts = \
 	import.lisp \
 	quasiquote.lisp \
 	macro.lisp \
+	macro-rest.lisp \
+	macro-test.lisp \
 	gensym.lisp \
 	boolean-test.lisp \
 	peano-test.lisp \
