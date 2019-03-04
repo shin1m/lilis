@@ -438,8 +438,7 @@ template<typename T, typename U>
 inline T* f_cast(U* a_p)
 {
 	auto p = dynamic_cast<T*>(a_p);
-	if (!p)
-		throw std::runtime_error("must be "s + typeid(T).name());
+	if (!p) throw std::runtime_error("must be "s + typeid(T).name());
 	return p;
 }
 
@@ -1226,10 +1225,10 @@ struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 			auto pair = a_engine.f_pointer(f_cast<t_pair>(a_list));
 			auto list = a_engine.f_pointer(a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr));
 			auto last = a_engine.f_pointer<t_pair>(list);
-			do {
+			while (pair->v_tail) {
 				pair = f_cast<t_pair>(pair->v_tail);
 				f_push(a_engine, last, pair->v_head);
-			} while (pair->v_tail);
+			}
 			last->v_tail = tail;
 			return list;
 		}
