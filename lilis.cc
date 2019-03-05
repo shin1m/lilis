@@ -1,15 +1,14 @@
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 #include <list>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
-#include <cinttypes>
-#include <cstdio>
 #include <cstring>
-#include <cwctype>
 
 namespace lilis
 {
@@ -207,24 +206,24 @@ struct t_engine : t_root
 		auto p = v_head;
 		v_head += a_n;
 		if (v_head > v_tail || v_debug) {
-			if (v_verbose) std::fprintf(stderr, "gc collecting...\n");
+			if (v_verbose) std::cerr << "gc collecting..." <<std::endl;
 			f_compact();
 			for (auto q = v_heap1.get(); q != p;) {
 				auto p = reinterpret_cast<t_object*>(q);
 				q += p->f_size();
 				p->f_destruct(*this);
 			}
-			if (v_verbose) std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
+			if (v_verbose) std::cerr << "gc done: " << v_tail - v_head << " bytes free" << std::endl;
 			while (true) {
 				p = v_head;
 				v_head += a_n;
 				if (v_head <= v_tail) break;
-				if (v_verbose) std::fprintf(stderr, "gc expanding...\n");
+				if (v_verbose) std::cerr << "gc expanding..." << std::endl;
 				v_size *= 2;
 				v_heap1.reset(new char[v_size]);
 				f_compact();
 				v_heap1.reset(new char[v_size]);
-				if (v_verbose) std::fprintf(stderr, "gc done: %d bytes free\n", v_tail - v_head);
+				if (v_verbose) std::cerr << "gc done: " << v_tail - v_head << " bytes free" << std::endl;
 			}
 		}
 		return p;
@@ -244,7 +243,7 @@ struct t_engine : t_root
 	t_symbol* f_symbol(std::wstring_view a_name);
 	size_t f_expand(size_t a_arguments);
 	void f_run(t_code* a_code, t_object* a_arguments);
-	t_pair* f_parse(const char* a_path);
+	t_pair* f_parse(const std::filesystem::path& a_path);
 	void f_run(t_holder<t_module>* a_module, t_pair* a_expressions);
 	t_holder<t_module>* f_module(const std::filesystem::path& a_path, std::wstring_view a_name);
 };
@@ -1318,11 +1317,11 @@ struct : t_static
 		a_engine.v_used -= a_arguments;
 		if (a_arguments > 0)
 			for (size_t i = 0;;) {
-				std::printf("%ls", lilis::f_string(a_engine.v_used[i]).c_str());
+				std::wcout << lilis::f_string(a_engine.v_used[i]);
 				if (++i >= a_arguments) break;
-				std::putchar(' ');
+				std::wcout << L' ';
 			}
-		std::putchar('\n');
+		std::wcout << std::endl;
 		a_engine.v_used[-1] = nullptr;
 	}
 } v_print;
@@ -1405,24 +1404,23 @@ namespace prompt
 }
 
 template<typename T_seek, typename T_get>
-void f_print_with_caret(T_seek a_seek, T_get a_get, std::FILE* a_out, size_t a_column)
+void f_print_with_caret(T_seek a_seek, T_get a_get, std::ostream& a_out, size_t a_column)
 {
 	a_seek();
-	std::putwc('\t', a_out);
+	a_out << L'\t';
 	while (true) {
 		wint_t c = a_get();
 		if (c == WEOF || c == L'\n') break;
-		std::putwc(c, a_out);
+		a_out << c;
 	}
-	std::putwc('\n', a_out);
+	a_out << std::endl;
 	a_seek();
-	std::putwc('\t', a_out);
+	a_out << L'\t';
 	for (size_t i = 1; i < a_column; ++i) {
 		wint_t c = a_get();
-		std::putwc(std::iswspace(c) ? c : ' ', a_out);
+		a_out << (std::iswspace(c) ? c : L' ');
 	}
-	std::putwc('^', a_out);
-	std::putwc('\n', a_out);
+	a_out << L'^' << std::endl;
 }
 
 struct t_at
@@ -1442,11 +1440,11 @@ struct t_error : std::runtime_error
 	template<typename T_seek, typename T_get>
 	void f_dump(const char* a_path, T_seek a_seek, T_get a_get) const
 	{
-		std::fprintf(stderr, "at %s:%zu:%zu\n", a_path, v_at.v_line, v_at.v_column);
+		std::cerr << "at " << a_path << ':' << v_at.v_line << ':' << v_at.v_column << std::endl;
 		f_print_with_caret([&]
 		{
 			a_seek(v_at.v_position);
-		}, a_get, stderr, v_at.v_column);
+		}, a_get, std::cerr, v_at.v_column);
 	}
 };
 
@@ -1691,14 +1689,13 @@ t_pair* f_parse(t_engine& a_engine, T_get&& a_get)
 	return t_parser<T_get>(a_engine, std::forward<T_get>(a_get))();
 }
 
-t_pair* t_engine::f_parse(const char* a_path)
+t_pair* t_engine::f_parse(const std::filesystem::path& a_path)
 {
-	auto fp = std::fopen(a_path, "r");
-	if (fp == NULL) throw std::runtime_error("unable to open");
-	std::unique_ptr<std::FILE, decltype(&std::fclose)> file(fp, &std::fclose);
+	std::wfilebuf fb;
+	if (!fb.open(a_path, std::ios_base::in)) throw std::runtime_error("unable to open");
 	return lilis::f_parse(*this, [&]
 	{
-		return std::getwc(fp);
+		return fb.sbumpc();
 	});
 }
 
@@ -1708,7 +1705,7 @@ t_holder<t_module>* t_engine::f_module(const std::filesystem::path& a_path, std:
 	if (i != v_modules.end() && i->first == a_name) return i->second;
 	auto path = a_path / a_name;
 	path += ".lisp";
-	auto expressions = f_pointer(f_parse(path.c_str()));
+	auto expressions = f_pointer(f_parse(path));
 	i = v_modules.emplace_hint(i, a_name, nullptr);
 	i->second = f_new<t_holder<t_module>>(*this, path);
 	(*i->second)->v_entry = i;
@@ -1789,14 +1786,10 @@ int main(int argc, char* argv[])
 		(*module)->f_register(L"define"sv, &v_define_and_export);
 		t_and_export v_set_and_export(&v_set);
 		(*module)->f_register(L"set!"sv, &v_set_and_export);
-		while (true) {
-			std::fputs("> ", stdout);
-			std::vector<wint_t> cs;
-			auto c = std::getwchar();
-			while (c != WEOF && c != L'\n') {
-				cs.push_back(c);
-				c = std::getwchar();
-			}
+		while (std::wcin) {
+			std::wcout << L"> ";
+			std::wstring cs;
+			std::getline(std::wcin, cs);
 			if (!cs.empty()) {
 				cs.push_back(WEOF);
 				try {
@@ -1810,10 +1803,10 @@ int main(int argc, char* argv[])
 						(*code)->v_imports.push_back(module);
 						(*code)->f_compile(expressions);
 						engine.f_run(*code, nullptr);
-						std::printf("%ls\n", f_string(engine.v_used[0]).c_str());
+						std::wcout << f_string(engine.v_used[0]) << std::endl;
 					}
 				} catch (std::exception& e) {
-					std::fprintf(stderr, "caught: %s\n", e.what());
+					std::cerr << "caught: " << e.what() << std::endl;
 					if (auto p = dynamic_cast<t_error*>(&e)) {
 						decltype(cs.begin()) i;
 						p->f_dump(nullptr, [&](long a_position)
@@ -1826,23 +1819,23 @@ int main(int argc, char* argv[])
 					}
 				}
 			}
-			if (c == WEOF) break;
 		}
 	} else {
 		auto path = std::filesystem::absolute(argv[1]);
 		auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine, path));
 		try {
-			engine.f_run(module, engine.f_parse(path.c_str()));
+			engine.f_run(module, engine.f_parse(path));
 		} catch (std::exception& e) {
-			std::fprintf(stderr, "caught: %s\n", e.what());
+			std::cerr << "caught: " << e.what() << std::endl;
 			if (auto p = dynamic_cast<t_error*>(&e)) {
-				std::unique_ptr<std::FILE, decltype(&std::fclose)> file(std::fopen(path.c_str(), "r"), &std::fclose);
+				std::wfilebuf fb;
+				fb.open(path, std::ios_base::in);
 				p->f_dump(path.c_str(), [&](long a_position)
 				{
-					std::fseek(file.get(), a_position, SEEK_SET);
+					fb.pubseekpos(a_position);
 				}, [&]
 				{
-					return std::getwc(file.get());
+					return fb.sbumpc();
 				});
 			}
 			return -1;
