@@ -1,0 +1,18 @@
+dist: xenial
+language: cpp
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+    packages:
+      - g++-8
+env:
+  - CONFIGURE_OPTION='--enable-debug CXX=g++-8'
+  - CONFIGURE_OPTION='CXX=g++-8'
+before_script:
+  - autoreconf -is
+  - ./configure $CONFIGURE_OPTION
+  - make
+script:
+  - make check
+  - cat test/*.log
