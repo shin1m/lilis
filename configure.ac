@@ -1,6 +1,6 @@
-AC_INIT([lilis], [201902])
+AC_INIT([lilis], [201903])
 AM_INIT_AUTOMAKE([foreign nostdinc dist-bzip2 no-dist-gzip])
-AC_CONFIG_SRCDIR([lilis.cc])
+AC_CONFIG_SRCDIR([src/main.cc])
 
 if test "${CXXFLAGS+set}" != set; then
 	CXXFLAGS=
@@ -37,6 +37,7 @@ AM_CONDITIONAL([PROFILE], [test x$profile = xtrue])
 AC_CONFIG_HEADERS([configure.h])
 AC_CONFIG_FILES([
 	Makefile
+	src/Makefile
 	test/Makefile
 ])
 AC_OUTPUT

@@ -1,7 +1,7 @@
 TEST_EXTENSIONS = .lisp .repl
-LISP_LOG_COMPILER = $(top_builddir)/lilis
+LISP_LOG_COMPILER = $(top_builddir)/src/lilis
 AM_LISP_LOG_FLAGS = --debug --verbose
-REPL_LOG_COMPILER = $(srcdir)/run-repl $(top_builddir)/lilis
+REPL_LOG_COMPILER = $(srcdir)/run-repl $(top_builddir)/src/lilis
 scripts = \
 	hello.lisp \
 	condition.lisp \
