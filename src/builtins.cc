@@ -292,25 +292,25 @@ namespace prompt
 	struct t_continuation : t_object_of<t_continuation>
 	{
 		size_t v_stack;
-		size_t v_contexts;
+		size_t v_frames;
 
-		t_continuation(t_context* a_context, size_t a_stack, size_t a_contexts) : v_stack(a_stack), v_contexts(a_contexts)
+		t_continuation(t_frame* a_frame, size_t a_stack, size_t a_frames) : v_stack(a_stack), v_frames(a_frames)
 		{
-			auto head = a_context[v_contexts - 1].v_stack;
-			auto contexts = reinterpret_cast<t_context*>(std::copy_n(head, v_stack, reinterpret_cast<t_object**>(this + 1)));
-			std::copy_n(a_context, v_contexts, contexts);
-			for (size_t i = 0; i < v_contexts; ++i) contexts[i].v_stack -= head - static_cast<t_object**>(nullptr);
+			auto head = a_frame[v_frames - 1].v_stack;
+			auto frames = reinterpret_cast<t_frame*>(std::copy_n(head, v_stack, reinterpret_cast<t_object**>(this + 1)));
+			std::copy_n(a_frame, v_frames, frames);
+			for (size_t i = 0; i < v_frames; ++i) frames[i].v_stack -= head - static_cast<t_object**>(nullptr);
 		}
 		virtual size_t f_size() const
 		{
-			return sizeof(t_continuation) + sizeof(t_object*) * v_stack + sizeof(t_context) * v_contexts;
+			return sizeof(t_continuation) + sizeof(t_object*) * v_stack + sizeof(t_frame) * v_frames;
 		}
 		virtual void f_scan(gc::t_collector& a_collector)
 		{
 			auto p = reinterpret_cast<t_object**>(this + 1);
 			for (size_t i = 0; i < v_stack; ++i, ++p) *p = a_collector.f_forward(*p);
-			auto q = reinterpret_cast<t_context*>(p);
-			for (size_t i = 0; i < v_contexts; ++i, ++q) q->f_scan(a_collector);
+			auto q = reinterpret_cast<t_frame*>(p);
+			for (size_t i = 0; i < v_frames; ++i, ++q) q->f_scan(a_collector);
 		}
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
@@ -319,9 +319,9 @@ namespace prompt
 			auto value = used[1];
 			auto p = reinterpret_cast<t_object**>(this + 1);
 			a_engine.v_used = std::copy_n(p, v_stack, used);
-			a_engine.v_context -= v_contexts;
-			std::copy_n(reinterpret_cast<t_context*>(p + v_stack), v_contexts, a_engine.v_context);
-			for (size_t i = 0; i < v_contexts; ++i) a_engine.v_context[i].v_stack += used - static_cast<t_object**>(nullptr);
+			a_engine.v_frame -= v_frames;
+			std::copy_n(reinterpret_cast<t_frame*>(p + v_stack), v_frames, a_engine.v_frame);
+			for (size_t i = 0; i < v_frames; ++i) a_engine.v_frame[i].v_stack += used - static_cast<t_object**>(nullptr);
 			*a_engine.v_used++ = value;
 		}
 	};
@@ -332,12 +332,12 @@ namespace prompt
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
 			if (a_arguments != 3) throw std::runtime_error("requires three arguments");
-			if (a_engine.v_context <= a_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
-			--a_engine.v_context;
-			a_engine.v_context->v_stack = a_engine.v_used - 4;
-			a_engine.v_context->v_code = nullptr;
-			a_engine.v_context->v_current = &v_return;
-			a_engine.v_context->v_scope = nullptr;
+			if (a_engine.v_frame <= a_engine.v_frames.get()) throw std::runtime_error("stack overflow");
+			--a_engine.v_frame;
+			a_engine.v_frame->v_stack = a_engine.v_used - 4;
+			a_engine.v_frame->v_code = nullptr;
+			a_engine.v_frame->v_current = &v_return;
+			a_engine.v_frame->v_scope = nullptr;
 			a_engine.v_used[-1]->f_call(a_engine, 0);
 		}
 	} v_call;
@@ -347,18 +347,18 @@ namespace prompt
 		{
 			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
 			auto tail = a_engine.v_used - a_arguments - 1;
-			auto context = a_engine.v_context;
-			while (!dynamic_cast<t_call*>(context->v_stack[0]) || context->v_stack[1] != tail[1])
-				if (++context == a_engine.v_contexts.get() + t_engine::V_CONTEXTS)
+			auto frame = a_engine.v_frame;
+			while (!dynamic_cast<t_call*>(frame->v_stack[0]) || frame->v_stack[1] != tail[1])
+				if (++frame == a_engine.v_frames.get() + t_engine::V_FRAMES)
 					throw std::runtime_error("no matching prompt found");
-			auto head = context->v_stack;
+			auto head = frame->v_stack;
 			auto stack = tail - head;
-			auto contexts = ++context - a_engine.v_context;
-			head[1] = new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_context) * contexts)) t_continuation(a_engine.v_context, stack, contexts);
+			auto frames = ++frame - a_engine.v_frame;
+			head[1] = new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_frame) * frames)) t_continuation(a_engine.v_frame, stack, frames);
 			head[0] = this;
 			auto handler = head[2];
 			a_engine.v_used = std::copy(tail + 2, a_engine.v_used, head + 2);
-			a_engine.v_context = context;
+			a_engine.v_frame = frame;
 			handler->f_call(a_engine, a_arguments);
 		}
 	} v_abort;

@@ -137,14 +137,14 @@ struct t_code
 				tail = scope->f_locals()[v_arguments] = v_engine.f_new<t_pair>(v_engine.v_used[-1], tail);
 		}
 		v_engine.v_used = used;
-		if (v_engine.v_context <= v_engine.v_contexts.get()) throw std::runtime_error("stack overflow");
-		--v_engine.v_context;
-		v_engine.v_context->v_stack = --v_engine.v_used;
-		if (v_engine.v_context->v_stack + v_stack > v_engine.v_stack.get() + t_engine::V_STACK) throw std::runtime_error("stack overflow");
-		v_engine.v_used = v_engine.v_context->v_stack + 1;
-		v_engine.v_context->v_code = v_this;
-		v_engine.v_context->v_current = v_instructions.data();
-		v_engine.v_context->v_scope = scope;
+		if (v_engine.v_frame <= v_engine.v_frames.get()) throw std::runtime_error("stack overflow");
+		--v_engine.v_frame;
+		v_engine.v_frame->v_stack = --v_engine.v_used;
+		if (v_engine.v_frame->v_stack + v_stack > v_engine.v_stack.get() + t_engine::V_STACK) throw std::runtime_error("stack overflow");
+		v_engine.v_used = v_engine.v_frame->v_stack + 1;
+		v_engine.v_frame->v_code = v_this;
+		v_engine.v_frame->v_current = v_instructions.data();
+		v_engine.v_frame->v_scope = scope;
 	}
 };
 

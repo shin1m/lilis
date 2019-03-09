@@ -37,7 +37,7 @@ struct t_holder : t_object_of<t_holder<T>>
 	}
 };
 
-struct t_context
+struct t_frame
 {
 	t_holder<t_code>* v_code;
 	void** v_current;
@@ -54,12 +54,12 @@ struct t_context
 struct t_engine : gc::t_collector
 {
 	static constexpr size_t V_STACK = 1024;
-	static constexpr size_t V_CONTEXTS = 256;
+	static constexpr size_t V_FRAMES = 256;
 
 	std::unique_ptr<t_object*[]> v_stack{new t_object*[V_STACK]};
-	std::unique_ptr<t_context[]> v_contexts{new t_context[V_CONTEXTS]};
+	std::unique_ptr<t_frame[]> v_frames{new t_frame[V_FRAMES]};
 	t_object** v_used = v_stack.get();
-	t_context* v_context = v_contexts.get() + V_CONTEXTS;
+	t_frame* v_frame = v_frames.get() + V_FRAMES;
 	std::map<std::wstring, t_symbol*, std::less<>> v_symbols;
 	t_holder<t_module>* v_global = nullptr;
 	std::map<std::wstring, t_holder<t_module>*, std::less<>> v_modules;
