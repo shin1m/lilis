@@ -1,4 +1,3 @@
-#include "code.h"
 #include "parser.h"
 #include "builtins.h"
 #include <fstream>
@@ -12,19 +11,18 @@ using namespace lilis;
 struct t_and_export : t_with_value<t_static, t_object>
 {
 	using t_base::t_base;
-	virtual t_object* f_apply(t_code* a_code, t_object* a_arguments)
+	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
 	{
-		auto& engine = a_code->v_engine;
-		auto arguments = engine.f_pointer(a_arguments);
-		auto value = engine.f_pointer(a_code->f_generate(v_value)->f_apply(a_code, arguments));
-		if (a_code->v_outer) return value;
-		auto symbol = engine.f_pointer(static_cast<t_symbol*>(static_cast<t_pair*>(static_cast<t_object*>(arguments))->v_head));
-		if (dynamic_cast<t_mutable*>(a_code->f_resolve(symbol))) {
+		auto& engine = a_code.v_engine;
+		auto symbol = engine.f_pointer(static_cast<t_symbol*>(static_cast<t_pair*>(a_pair->v_tail)->v_head));
+		auto value = engine.f_pointer(a_code.f_render(v_value, a_location)->f_apply(a_code, a_location, a_pair));
+		if (a_code.v_outer) return value;
+		if (dynamic_cast<t_mutable*>(a_code.f_resolve(symbol, {}))) {
 			auto variable = engine.f_new<t_module::t_variable>(nullptr);
-			(*a_code->v_module)->insert_or_assign(symbol, variable);
-			return variable->f_generate(a_code, value);
+			(*a_code.v_module)->insert_or_assign(symbol, variable);
+			return variable->f_render(a_code, value);
 		} else {
-			(*a_code->v_module)->insert_or_assign(symbol, value);
+			(*a_code.v_module)->insert_or_assign(symbol, value);
 			return value;
 		}
 	}
@@ -70,7 +68,7 @@ int main(int argc, char* argv[])
 			if (!cs.empty()) {
 				cs.push_back(WEOF);
 				try {
-					auto expressions = engine.f_pointer(f_parse(engine, [i = cs.begin()]() mutable
+					auto expressions = engine.f_pointer(f_parse(engine, "", [i = cs.begin()]() mutable
 					{
 						return *i++;
 					}));
@@ -78,15 +76,18 @@ int main(int argc, char* argv[])
 						auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
 						(*code)->v_imports.push_back(engine.v_global);
 						(*code)->v_imports.push_back(module);
-						(*code)->f_compile(expressions);
+						(*code)->f_compile({}, expressions);
 						engine.f_run(*code, nullptr);
 						std::wcout << f_string(engine.v_used[0]) << std::endl;
 					}
 				} catch (std::exception& e) {
-					std::cerr << "caught: " << e.what() << std::endl;
-					if (auto p = dynamic_cast<t_error*>(&e)) {
+					std::wcerr << L"caught: " << e.what() << std::endl;
+					if (auto p = dynamic_cast<t_error*>(&e)) if (!p->v_backtrace.empty()) {
+						auto at = p->v_backtrace.back().v_at;
+						p->v_backtrace.pop_back();
+						p->f_dump();
 						decltype(cs.begin()) i;
-						p->f_dump(nullptr, [&](long a_position)
+						at.f_print("", [&](long a_position)
 						{
 							i = cs.begin() + a_position;
 						}, [&]
@@ -99,22 +100,12 @@ int main(int argc, char* argv[])
 		}
 	} else {
 		auto path = std::filesystem::absolute(argv[1]);
-		auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine, path));
 		try {
+			auto module = engine.f_pointer(engine.f_new<t_holder<t_module>>(engine, path));
 			engine.f_run(module, engine.f_parse(path));
 		} catch (std::exception& e) {
-			std::cerr << "caught: " << e.what() << std::endl;
-			if (auto p = dynamic_cast<t_error*>(&e)) {
-				std::wfilebuf fb;
-				fb.open(path, std::ios_base::in);
-				p->f_dump(path.c_str(), [&](long a_position)
-				{
-					fb.pubseekpos(a_position);
-				}, [&]
-				{
-					return fb.sbumpc();
-				});
-			}
+			std::wcerr << L"caught: " << e.what() << std::endl;
+			if (auto p = dynamic_cast<t_error*>(&e)) p->f_dump();
 			return -1;
 		}
 	}

@@ -8,8 +8,6 @@
 namespace lilis
 {
 
-using namespace std::literals;
-
 struct t_bindings : std::map<t_symbol*, t_object*>
 {
 	void f_scan(gc::t_collector& a_collector)
@@ -27,7 +25,7 @@ struct t_bindings : std::map<t_symbol*, t_object*>
 
 struct t_mutable
 {
-	virtual t_object* f_generate(t_code* a_code, t_object* a_expression) = 0;
+	virtual t_object* f_render(t_code& a_code, t_object* a_expression) = 0;
 };
 
 struct t_module : t_bindings
@@ -35,7 +33,7 @@ struct t_module : t_bindings
 	struct t_variable : t_with_value<t_object_of<t_variable>, t_object>, t_mutable
 	{
 		using t_base::t_base;
-		virtual t_object* f_generate(t_code* a_code, t_object* a_expression);
+		virtual t_object* f_render(t_code& a_code, t_object* a_expression);
 		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 		virtual void f_call(t_engine& a_engine, size_t a_arguments);
 	};
@@ -92,7 +90,7 @@ struct t_code
 		{
 		}
 		size_t f_outer(t_code* a_code) const;
-		virtual t_object* f_generate(t_code* a_code, t_object* a_expression);
+		virtual t_object* f_render(t_code& a_code, t_object* a_expression);
 		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 	};
 
@@ -113,13 +111,13 @@ struct t_code
 	{
 	}
 	void f_scan();
-	t_object* f_generate(t_object* a_value)
+	t_object* f_render(t_object* a_value, const t_location& a_location)
 	{
-		return a_value ? a_value->f_generate(this) : v_engine.f_new<t_quote>(nullptr);
+		return a_value ? a_value->f_render(*this, a_location) : v_engine.f_new<t_quote>(nullptr);
 	}
-	t_object* f_resolve(t_symbol* a_symbol) const;
-	void f_compile(t_pair* a_body);
-	t_holder<t_code>* f_new(t_object* a_body);
+	t_object* f_resolve(t_symbol* a_symbol, const t_location& a_location) const;
+	void f_compile(const t_location& a_location, t_pair* a_body);
+	t_holder<t_code>* f_new(const t_location& a_location, t_pair* a_pair);
 	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments)
 	{
 		if (a_rest) {
@@ -146,6 +144,113 @@ struct t_code
 		v_engine.v_frame->v_current = v_instructions.data();
 		v_engine.v_frame->v_scope = scope;
 	}
+};
+
+struct t_at
+{
+	long v_position;
+	size_t v_line;
+	size_t v_column;
+
+	template<typename T_seek, typename T_get>
+	void f_print(const char* a_path, T_seek a_seek, T_get a_get) const
+	{
+		a_seek(v_position);
+		std::wcerr << L"at " << a_path << L':' << v_line << L':' << v_column << std::endl << L'\t';
+		while (true) {
+			wint_t c = a_get();
+			if (c == WEOF || c == L'\n') break;
+			std::wcerr << wchar_t(c);
+		}
+		a_seek(v_position);
+		std::wcerr << std::endl << L'\t';
+		for (size_t i = 1; i < v_column; ++i) {
+			wint_t c = a_get();
+			std::wcerr << (std::iswspace(c) ? wchar_t(c) : L' ');
+		}
+		std::wcerr << L'^' << std::endl;
+	}
+};
+
+struct t_parsed_pair : t_object_of<t_parsed_pair, t_pair>
+{
+	std::filesystem::path v_path;
+	t_at v_where_head;
+	t_at v_where_tail;
+
+	t_parsed_pair(t_object* a_head, const std::filesystem::path& a_path, const t_at& a_where_head) : t_object_of<t_parsed_pair, t_pair>(a_head, nullptr), v_path(a_path), v_where_head(a_where_head)
+	{
+	}
+	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
+};
+
+struct t_error : std::runtime_error
+{
+	std::list<t_location> v_backtrace;
+
+	using std::runtime_error::runtime_error;
+	void f_dump() const;
+};
+
+template<typename T, typename U>
+inline T* f_cast(U* a_p)
+{
+	auto p = dynamic_cast<T*>(a_p);
+	if (!p) throw t_error("must be "s + typeid(T).name());
+	return p;
+}
+
+struct t_location
+{
+	std::filesystem::path v_path;
+	t_at v_at;
+
+	t_location f_at_head(t_pair* a_pair) const
+	{
+		auto p = dynamic_cast<t_parsed_pair*>(a_pair);
+		return p ? t_location{p->v_path, p->v_where_head} : *this;
+	}
+	t_location f_at_tail(t_pair* a_pair) const
+	{
+		auto p = dynamic_cast<t_parsed_pair*>(a_pair);
+		return p ? t_location{p->v_path, p->v_where_tail} : *this;
+	}
+	template<typename T>
+	auto f_try(T&& a_do) const
+	{
+		try {
+			return a_do();
+		} catch (t_error& e) {
+			e.v_backtrace.push_back({v_path, v_at});
+			throw;
+		}
+	}
+	template<typename T, typename U>
+	T* f_cast(U* a_p) const
+	{
+		return f_try([&]
+		{
+			return lilis::f_cast<T>(a_p);
+		});
+	}
+	template<typename T>
+	T* f_cast_head(t_pair* a_p) const
+	{
+		return f_at_head(a_p).f_cast<T>(a_p->v_head);
+	}
+	template<typename T>
+	T* f_cast_tail(t_pair* a_p) const
+	{
+		return f_at_tail(a_p).f_cast<T>(a_p->v_tail);
+	}
+	void f_nil_tail(t_pair* a_p) const
+	{
+		f_at_tail(a_p).f_try([&]
+		{
+			if (a_p->v_tail) throw t_error("must be nil");
+		});
+	}
+	void f_print() const;
 };
 
 struct t_call : t_with_value<t_object_of<t_call>, t_pair>
@@ -208,22 +313,6 @@ struct t_emit
 		return *this;
 	}
 };
-
-template<typename T, typename U>
-inline T* f_cast(U* a_p)
-{
-	auto p = dynamic_cast<T*>(a_p);
-	if (!p) throw std::runtime_error("must be "s + typeid(T).name());
-	return p;
-}
-
-inline t_object* f_chop(gc::t_pointer<t_object>& a_p)
-{
-	auto pair = f_cast<t_pair>(static_cast<t_object*>(a_p));
-	auto p = pair->v_head;
-	a_p = pair->v_tail;
-	return p;
-}
 
 inline std::wstring f_string(t_object* a_value)
 {

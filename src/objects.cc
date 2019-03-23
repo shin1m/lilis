@@ -4,18 +4,25 @@
 namespace lilis
 {
 
-t_object* t_object::f_apply(t_code* a_code, t_object* a_arguments)
+t_object* t_object::f_render(t_code& a_code, const t_location& a_location)
 {
-	auto& engine = a_code->v_engine;
-	auto arguments = engine.f_pointer(a_arguments);
+	return this;
+}
+
+t_object* t_object::f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+{
+	auto& engine = a_code.v_engine;
+	auto arguments = engine.f_pointer(a_pair->v_tail);
+	auto location = a_location.f_at_tail(a_pair);
 	auto last = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(this), nullptr));
 	auto call = engine.f_pointer(engine.f_new<t_call>(last));
-	while (auto pair = dynamic_cast<t_pair*>(static_cast<t_object*>(arguments))) {
-		arguments = pair->v_tail;
-		f_push(engine, last, a_code->f_generate(pair->v_head));
+	while (auto p = dynamic_cast<t_pair*>(arguments.v_value)) {
+		arguments = p->v_tail;
+		location = a_location.f_at_tail(p);
+		f_push(engine, last, a_code.f_render(p->v_head, a_location.f_at_head(p)));
 	}
 	if (arguments) {
-		f_push(engine, last, arguments->f_generate(a_code));
+		f_push(engine, last, a_code.f_render(arguments, location));
 		call->v_expand = true;
 	}
 	return call;
@@ -24,6 +31,16 @@ t_object* t_object::f_apply(t_code* a_code, t_object* a_arguments)
 void t_object::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 {
 	a_emit(e_instruction__PUSH, a_stack + 1)(this);
+}
+
+void t_object::f_call(t_engine& a_engine, size_t a_arguments)
+{
+	throw std::runtime_error("not callable");
+}
+
+std::wstring t_object::f_string() const
+{
+	return L"#object";
 }
 
 void t_symbol::f_scan(gc::t_collector& a_collector)
@@ -36,9 +53,9 @@ void t_symbol::f_destruct(gc::t_collector& a_collector)
 	static_cast<t_engine&>(a_collector).v_symbols.erase(v_entry);
 }
 
-t_object* t_symbol::f_generate(t_code* a_code)
+t_object* t_symbol::f_render(t_code& a_code, const t_location& a_location)
 {
-	return a_code->f_resolve(this);
+	return a_code.f_resolve(this, a_location);
 }
 
 std::wstring t_symbol::f_string() const
@@ -52,10 +69,10 @@ void t_pair::f_scan(gc::t_collector& a_collector)
 	v_tail = a_collector.f_forward(v_tail);
 }
 
-t_object* t_pair::f_generate(t_code* a_code)
+t_object* t_pair::f_render(t_code& a_code, const t_location& a_location)
 {
-	auto tail = a_code->v_engine.f_pointer(v_tail);
-	return a_code->f_generate(v_head)->f_apply(a_code, tail);
+	auto thiz = a_code.v_engine.f_pointer(this);
+	return a_code.f_render(v_head, a_location)->f_apply(a_code, a_location, thiz);
 }
 
 std::wstring t_pair::f_string() const
@@ -95,7 +112,7 @@ std::wstring t_unquote_splicing::f_string() const
 	return L",@" + lilis::f_string(v_value);
 }
 
-t_object* t_quasiquote::f_generate(t_code* a_code)
+t_object* t_quasiquote::f_render(t_code& a_code, const t_location& a_location)
 {
 	return f_unquasiquote(a_code, v_value);
 }

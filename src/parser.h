@@ -1,60 +1,16 @@
 #ifndef LILIS__PARSER_H
 #define LILIS__PARSER_H
 
-#include "engine.h"
+#include "code.h"
 
 namespace lilis
 {
-
-template<typename T_seek, typename T_get>
-void f_print_with_caret(T_seek a_seek, T_get a_get, std::ostream& a_out, size_t a_column)
-{
-	a_seek();
-	a_out << L'\t';
-	while (true) {
-		wint_t c = a_get();
-		if (c == WEOF || c == L'\n') break;
-		a_out << c;
-	}
-	a_out << std::endl;
-	a_seek();
-	a_out << L'\t';
-	for (size_t i = 1; i < a_column; ++i) {
-		wint_t c = a_get();
-		a_out << (std::iswspace(c) ? c : L' ');
-	}
-	a_out << L'^' << std::endl;
-}
-
-struct t_at
-{
-	long v_position;
-	size_t v_line;
-	size_t v_column;
-};
-
-struct t_error : std::runtime_error
-{
-	const t_at v_at;
-
-	t_error(const char* a_message, const t_at& a_at) : std::runtime_error(a_message), v_at(a_at)
-	{
-	}
-	template<typename T_seek, typename T_get>
-	void f_dump(const char* a_path, T_seek a_seek, T_get a_get) const
-	{
-		std::cerr << "at " << a_path << ':' << v_at.v_line << ':' << v_at.v_column << std::endl;
-		f_print_with_caret([&]
-		{
-			a_seek(v_at.v_position);
-		}, a_get, std::cerr, v_at.v_column);
-	}
-};
 
 template<typename T_get>
 struct t_parser
 {
 	t_engine& v_engine;
+	std::filesystem::path v_path;
 	T_get v_get;
 	long v_p = 0;
 	long v_position = 0;
@@ -97,39 +53,38 @@ struct t_parser
 		f_get();
 		f_skip();
 	}
-	t_object* f_expression();
-	t_pair* f_list()
+	void f_throw [[noreturn]] (const std::string& a_message) const
 	{
-		f_next();
-		auto list = v_engine.f_pointer<t_pair>(nullptr);
-		if (v_c != L')') {
-			list = v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr);
-			auto last = v_engine.f_pointer<t_pair>(list);
-			while (v_c != L')') {
-				if (v_c == L'.') {
-					f_next();
-					last->v_tail = f_expression();
-					if (v_c != L')') throw t_error("must be ')'", v_at);
-					break;
-				}
-				f_push(v_engine, last, f_expression());
-			}
-		}
-		f_next();
-		return list;
+		t_error error(a_message);
+		error.v_backtrace.push_back({v_path, v_at});
+		throw error;
+	}
+	t_object* f_expression();
+	t_parsed_pair* f_head()
+	{
+		auto at = v_at;
+		return v_engine.f_new<t_parsed_pair>(v_engine.f_pointer(f_expression()), v_path, at);
+	}
+	void f_push(gc::t_pointer<t_parsed_pair>& a_p)
+	{
+		auto at = a_p->v_where_tail = v_at;
+		auto p = v_engine.f_new<t_parsed_pair>(v_engine.f_pointer(f_expression()), v_path, at);
+		a_p->v_tail = p;
+		a_p = p;
 	}
 
-	t_parser(t_engine& a_engine, T_get&& a_get) : v_engine(a_engine), v_get(std::forward<T_get>(a_get))
+	t_parser(t_engine& a_engine, const std::filesystem::path& a_path, T_get&& a_get) : v_engine(a_engine), v_path(a_path), v_get(std::forward<T_get>(a_get))
 	{
 		v_c = v_get();
 		f_skip();
 	}
-	t_pair* operator()()
+	t_parsed_pair* operator()()
 	{
 		if (v_c == WEOF) return nullptr;
-		auto list = v_engine.f_pointer(v_engine.f_new<t_pair>(v_engine.f_pointer(f_expression()), nullptr));
-		auto last = v_engine.f_pointer<t_pair>(list);
-		while (v_c != WEOF) f_push(v_engine, last, f_expression());
+		auto list = v_engine.f_pointer(f_head());
+		auto last = v_engine.f_pointer<t_parsed_pair>(list);
+		while (v_c != WEOF) f_push(last);
+		last->v_where_tail = v_at;
 		return list;
 	}
 };
@@ -139,7 +94,7 @@ t_object* t_parser<T_get>::f_expression()
 {
 	switch (v_c) {
 	case WEOF:
-		throw t_error("unexpected end of file", v_at);
+		f_throw("unexpected end of file");
 	case L'"':
 		{
 			f_get();
@@ -182,7 +137,7 @@ t_object* t_parser<T_get>::f_expression()
 						cs.push_back(L'\v');
 						break;
 					default:
-						throw t_error("lexical error", v_at);
+						f_throw("lexical error");
 					}
 				} else {
 					cs.push_back(v_c);
@@ -195,7 +150,28 @@ t_object* t_parser<T_get>::f_expression()
 		f_next();
 		return v_engine.f_new<t_quote>(v_engine.f_pointer(f_expression()));
 	case L'(':
-		return f_list();
+		{
+			f_next();
+			auto list = v_engine.f_pointer<t_parsed_pair>(nullptr);
+			if (v_c != L')') {
+				list = f_head();
+				for (auto last = v_engine.f_pointer<t_parsed_pair>(list);;) {
+					if (v_c == L')') {
+						last->v_where_tail = v_at;
+						break;
+					} else if (v_c == L'.') {
+						f_next();
+						last->v_where_tail = v_at;
+						last->v_tail = f_expression();
+						if (v_c != L')') f_throw("must be ')'");
+						break;
+					}
+					f_push(last);
+				}
+			}
+			f_next();
+			return list;
+		}
 	case L',':
 		f_get();
 		if (v_c == L'@') {
@@ -221,7 +197,7 @@ t_object* t_parser<T_get>::f_expression()
 				case L'x':
 					cs.push_back(v_c);
 					f_get();
-					if (!std::iswxdigit(v_c)) throw t_error("lexical error", v_at);
+					if (!std::iswxdigit(v_c)) f_throw("lexical error");
 					do {
 						cs.push_back(v_c);
 						f_get();
@@ -232,7 +208,7 @@ t_object* t_parser<T_get>::f_expression()
 					return nullptr;
 				default:
 					while (std::iswdigit(v_c)) {
-						if (v_c >= L'8') throw t_error("lexical error", v_at);
+						if (v_c >= L'8') f_throw("lexical error");
 						cs.push_back(v_c);
 						f_get();
 					}
@@ -258,7 +234,7 @@ t_object* t_parser<T_get>::f_expression()
 						cs.push_back(v_c);
 						f_get();
 					}
-					if (!std::iswdigit(v_c)) throw t_error("lexical error", v_at);
+					if (!std::iswdigit(v_c)) f_throw("lexical error");
 					do {
 						cs.push_back(v_c);
 						f_get();
@@ -287,9 +263,9 @@ t_object* t_parser<T_get>::f_expression()
 }
 
 template<typename T_get>
-t_pair* f_parse(t_engine& a_engine, T_get&& a_get)
+t_parsed_pair* f_parse(t_engine& a_engine, const std::filesystem::path& a_path, T_get&& a_get)
 {
-	return t_parser<T_get>(a_engine, std::forward<T_get>(a_get))();
+	return t_parser<T_get>(a_engine, a_path, std::forward<T_get>(a_get))();
 }
 
 }

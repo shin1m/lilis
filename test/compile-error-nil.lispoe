@@ -1,0 +1,4 @@
+caught: must be nil
+at .*/compile-error-nil\.lispo:1:14
+	\(define f 'x 'y\)
+	             \^

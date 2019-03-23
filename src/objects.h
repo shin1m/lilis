@@ -10,29 +10,23 @@ namespace lilis
 
 struct t_engine;
 struct t_code;
+struct t_location;
+struct t_pair;
 struct t_emit;
 
 struct t_object : gc::t_object
 {
-	virtual t_object* f_generate(t_code* a_code)
-	{
-		return this;
-	}
-	virtual t_object* f_apply(t_code* a_code, t_object* a_arguments);
+	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
+	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair);
 	virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
-	virtual void f_call(t_engine& a_engine, size_t a_arguments)
-	{
-		throw std::runtime_error("not callable");
-	}
-	virtual std::wstring f_string() const
-	{
-		return L"#object";
-	}
+	virtual void f_call(t_engine& a_engine, size_t a_arguments);
+	virtual std::wstring f_string() const;
 };
 
-template<typename T>
-struct t_object_of : t_object
+template<typename T, typename T_base = t_object>
+struct t_object_of : T_base
 {
+	using T_base::T_base;
 	virtual size_t f_size() const
 	{
 		return std::max(sizeof(T), sizeof(gc::t_collector::t_forward));
@@ -52,7 +46,7 @@ struct t_symbol : t_object_of<t_symbol>
 	}
 	virtual void f_scan(gc::t_collector& a_collector);
 	virtual void f_destruct(gc::t_collector& a_collector);
-	virtual t_object* f_generate(t_code* a_code);
+	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
 	virtual std::wstring f_string() const;
 };
 
@@ -65,7 +59,7 @@ struct t_pair : t_object_of<t_pair>
 	{
 	}
 	virtual void f_scan(gc::t_collector& a_collector);
-	virtual t_object* f_generate(t_code* a_code);
+	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
 	virtual std::wstring f_string() const;
 };
 
@@ -107,11 +101,12 @@ struct t_unquote_splicing : t_unquote
 struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 {
 	using t_base::t_base;
-	virtual t_object* f_generate(t_code* a_code);
+	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
 	virtual std::wstring f_string() const;
 };
 
-inline void f_push(gc::t_collector& a_collector, gc::t_pointer<t_pair>& a_p, t_object* a_value) {
+inline void f_push(gc::t_collector& a_collector, gc::t_pointer<t_pair>& a_p, t_object* a_value)
+{
 	auto p = a_collector.f_new<t_pair>(a_collector.f_pointer(a_value), nullptr);
 	a_p->v_tail = p;
 	a_p = p;

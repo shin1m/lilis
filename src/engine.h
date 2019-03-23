@@ -7,8 +7,11 @@
 namespace lilis
 {
 
+using namespace std::literals;
+
 struct t_scope;
 struct t_module;
+struct t_code;
 
 template<typename T>
 struct t_holder : t_object_of<t_holder<T>>

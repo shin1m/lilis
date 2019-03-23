@@ -1,0 +1,7 @@
+caught: not found
+at .*/compile-error-macro\.lispo:2:5
+	  '\(conz 'x x\)
+	    \^
+at .*/compile-error-macro\.lispo:4:1
+	\(m 'foo\)
+	\^

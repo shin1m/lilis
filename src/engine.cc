@@ -1,4 +1,3 @@
-#include "code.h"
 #include "parser.h"
 #include "builtins.h"
 #include <fstream>
@@ -72,16 +71,16 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 	top->v_stack = v_used;
 	*v_used++ = nullptr;
 	{
-		auto p = v_used;
-		while (auto pair = dynamic_cast<t_pair*>(a_arguments)) {
-			*v_used++ = pair->v_head;
-			a_arguments = pair->v_tail;
+		auto used = v_used;
+		while (auto p = dynamic_cast<t_pair*>(a_arguments)) {
+			*v_used++ = p->v_head;
+			a_arguments = p->v_tail;
 		}
 		if (a_arguments) {
 			*v_used++ = a_arguments;
-			f_expand(v_used - p);
+			f_expand(v_used - used);
 		}
-		a_code->f_call(a_code->v_rest, nullptr, v_used - p);
+		a_code->f_call(a_code->v_rest, nullptr, v_used - used);
 	}
 	while (true) {
 		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_frame->v_current))) {
@@ -182,8 +181,8 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 t_pair* t_engine::f_parse(const std::filesystem::path& a_path)
 {
 	std::wfilebuf fb;
-	if (!fb.open(a_path, std::ios_base::in)) throw std::runtime_error("unable to open");
-	return lilis::f_parse(*this, [&]
+	if (!fb.open(a_path, std::ios_base::in)) throw t_error("unable to open");
+	return lilis::f_parse(*this, a_path, [&]
 	{
 		return fb.sbumpc();
 	});
@@ -191,11 +190,10 @@ t_pair* t_engine::f_parse(const std::filesystem::path& a_path)
 
 void t_engine::f_run(t_holder<t_module>* a_module, t_pair* a_expressions)
 {
-	auto module = f_pointer(a_module);
 	auto expressions = f_pointer(a_expressions);
-	auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, module));
+	auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, f_pointer(a_module)));
 	(*code)->v_imports.push_back(v_global);
-	(*code)->f_compile(expressions);
+	(*code)->f_compile({}, expressions);
 	f_run(*code, nullptr);
 }
 
