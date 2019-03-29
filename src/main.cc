@@ -11,13 +11,13 @@ using namespace lilis;
 struct t_and_export : t_with_value<t_static, t_object>
 {
 	using t_base::t_base;
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
 		auto symbol = engine.f_pointer(static_cast<t_symbol*>(static_cast<t_pair*>(a_pair->v_tail)->v_head));
 		auto value = engine.f_pointer(a_code.f_render(v_value, a_location)->f_apply(a_code, a_location, a_pair));
 		if (a_code.v_outer) return value;
-		if (dynamic_cast<t_mutable*>(a_code.f_resolve(symbol, {}))) {
+		if (dynamic_cast<t_mutable*>(a_code.f_resolve(symbol, std::make_shared<t_at_file>(std::filesystem::path(), t_at())))) {
 			auto variable = engine.f_new<t_module::t_variable>(nullptr);
 			(*a_code.v_module)->insert_or_assign(symbol, variable);
 			return variable->f_render(a_code, value);
@@ -76,14 +76,14 @@ int main(int argc, char* argv[])
 						auto code = engine.f_pointer(engine.f_new<t_holder<t_code>>(engine, nullptr, module));
 						(*code)->v_imports.push_back(engine.v_global);
 						(*code)->v_imports.push_back(module);
-						(*code)->f_compile({}, expressions);
+						(*code)->f_compile(std::make_shared<t_at_file>(std::filesystem::path(), t_at()), expressions);
 						engine.f_run(*code, nullptr);
-						std::wcout << f_string(engine.v_used[0]) << std::endl;
+						std::wcout << engine.v_used[0] << std::endl;
 					}
 				} catch (std::exception& e) {
 					std::wcerr << L"caught: " << e.what() << std::endl;
 					if (auto p = dynamic_cast<t_error*>(&e)) if (!p->v_backtrace.empty()) {
-						auto at = p->v_backtrace.back().v_at;
+						auto at = static_cast<t_at_file*>(p->v_backtrace.back().get())->v_at;
 						p->v_backtrace.pop_back();
 						p->f_dump();
 						decltype(cs.begin()) i;

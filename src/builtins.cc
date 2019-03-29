@@ -23,7 +23,7 @@ struct : t_static
 		}
 	};
 
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
 		return engine.f_new<t_instantiate>(engine.f_pointer(a_code.f_new(a_location, a_pair)));
@@ -46,16 +46,16 @@ struct : t_static
 		}
 	};
 
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
 		if (!a_pair->v_tail) return engine.f_new<t_quote>(nullptr);
-		auto arguments = engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
-		auto last = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code.f_render(arguments->v_head, a_location.f_at_head(arguments))), nullptr));
+		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+		auto last = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments))), nullptr));
 		auto block = engine.f_pointer(engine.f_new<t_instance>(last));
 		while (arguments->v_tail) {
-			arguments = a_location.f_cast_tail<t_pair>(arguments);
-			f_push(engine, last, a_code.f_render(arguments->v_head, a_location.f_at_head(arguments)));
+			arguments = a_location->f_cast_tail<t_pair>(arguments);
+			f_push(engine, last, a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
 		}
 		return block;
 	}
@@ -63,60 +63,61 @@ struct : t_static
 
 }
 
-t_object* t_define::f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+t_object* t_define::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 {
 	auto& engine = a_code.v_engine;
-	auto arguments = engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
-	auto symbol = engine.f_pointer(a_location.f_cast_head<t_symbol>(arguments));
-	arguments = a_location.f_cast_tail<t_pair>(arguments);
+	auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+	auto symbol = engine.f_pointer(a_location->f_cast_head<t_symbol>(arguments));
+	arguments = a_location->f_cast_tail<t_pair>(arguments);
 	auto expression = engine.f_pointer(arguments->v_head);
-	a_location.f_nil_tail(arguments);
+	a_location->f_nil_tail(arguments);
 	auto local = engine.f_pointer(engine.f_new<t_code::t_local>(a_code.v_this, a_code.v_locals.size()));
 	a_code.v_bindings.emplace(symbol, local);
 	a_code.v_locals.push_back(symbol);
-	auto value = a_code.f_render(expression, a_location.f_at_head(arguments));
+	auto value = a_code.f_render(expression, a_location->f_at_head(arguments));
 	return local->f_render(a_code, value);
 }
 
 t_define v_define;
 
-t_object* t_set::f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+t_object* t_set::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 {
 	auto& engine = a_code.v_engine;
-	auto arguments = engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
-	auto location = a_location.f_at_head(arguments);
+	auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+	auto location = a_location->f_at_head(arguments);
 	auto bound = engine.f_pointer(a_code.f_render(arguments->v_head, location));
-	location.f_try([&]
+	location->f_try([&]
 	{
 		if (!dynamic_cast<t_mutable*>(bound.v_value)) throw t_error("not mutable");
 	});
-	arguments = a_location.f_cast_tail<t_pair>(arguments);
-	auto value = a_code.f_render(arguments->v_head, a_location.f_at_head(arguments));
-	a_location.f_nil_tail(arguments);
+	arguments = a_location->f_cast_tail<t_pair>(arguments);
+	auto value = a_code.f_render(arguments->v_head, a_location->f_at_head(arguments));
+	a_location->f_nil_tail(arguments);
 	return dynamic_cast<t_mutable*>(bound.v_value)->f_render(a_code, value);
 }
 
 t_set v_set;
 
-t_object* t_macro::f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+t_object* t_macro::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 {
 	struct t_instance : t_with_value<t_object_of<t_instance>, t_holder<t_code>>
 	{
 		using t_base::t_base;
-		virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+		virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 		{
-			return a_location.f_try([&]
+			return a_location->f_try([&]
 			{
 				auto& engine = a_code.v_engine;
 				engine.f_run(*v_value, a_pair->v_tail);
-				return a_code.f_render(engine.v_used[0], a_location);
+				auto p = engine.v_used[0];
+				return a_code.f_render(p, std::make_shared<t_at_expression>(engine, p));
 			});
 		}
 	};
 	auto& engine = a_code.v_engine;
-	auto at_tail = a_location.f_at_tail(a_pair);
-	auto arguments = engine.f_pointer(at_tail.f_cast<t_pair>(a_pair->v_tail));
-	auto symbol = engine.f_pointer(a_location.f_cast_head<t_symbol>(arguments));
+	auto at_tail = a_location->f_at_tail(a_pair);
+	auto arguments = engine.f_pointer(at_tail->f_cast<t_pair>(a_pair->v_tail));
+	auto symbol = engine.f_pointer(a_location->f_cast_head<t_symbol>(arguments));
 	return a_code.v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(engine.f_pointer(a_code.f_new(at_tail, arguments)))).first->second;
 }
 
@@ -127,14 +128,14 @@ namespace
 
 struct : t_static
 {
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
-		auto arguments = engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
-		auto at_head = a_location.f_at_head(arguments);
-		auto symbol = engine.f_pointer(at_head.f_cast<t_symbol>(arguments->v_head));
+		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+		auto at_head = a_location->f_at_head(arguments);
+		auto symbol = engine.f_pointer(at_head->f_cast<t_symbol>(arguments->v_head));
 		auto bound = engine.f_pointer(a_code.f_resolve(symbol, at_head));
-		a_location.f_nil_tail(arguments);
+		a_location->f_nil_tail(arguments);
 		if (dynamic_cast<t_mutable*>(bound.v_value)) {
 			auto variable = engine.f_pointer(engine.f_new<t_module::t_variable>(nullptr));
 			(*a_code.v_module)->insert_or_assign(symbol, variable);
@@ -147,12 +148,16 @@ struct : t_static
 
 struct : t_static
 {
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
-		auto arguments = engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
-		a_code.v_imports.push_back(engine.f_module((*a_code.v_module)->v_path.parent_path(), a_location.f_cast_head<t_symbol>(arguments)->v_entry->first));
-		a_location.f_nil_tail(arguments);
+		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+		auto location = a_location->f_at_head(arguments);
+		a_code.v_imports.push_back(location->f_try([&]
+		{
+			return engine.f_module((*a_code.v_module)->v_path.parent_path(), location->f_cast<t_symbol>(arguments->v_head)->v_entry->first);
+		}));
+		a_location->f_nil_tail(arguments);
 		return engine.f_new<t_quote>(nullptr);
 	}
 } v_import;
@@ -191,17 +196,17 @@ struct : t_static
 		}
 	};
 
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair)
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
-		auto arguments = engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
-		auto condition = engine.f_pointer(a_code.f_render(arguments->v_head, a_location.f_at_head(arguments)));
-		arguments = a_location.f_cast_tail<t_pair>(arguments);
-		auto truee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location.f_at_head(arguments)));
+		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+		auto condition = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
+		arguments = a_location->f_cast_tail<t_pair>(arguments);
+		auto truee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
 		if (!arguments->v_tail) return engine.f_new<t_instance>(condition, truee, nullptr);
-		arguments = a_location.f_cast_tail<t_pair>(arguments);
-		auto falsee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location.f_at_head(arguments)));
-		a_location.f_nil_tail(arguments);
+		arguments = a_location->f_cast_tail<t_pair>(arguments);
+		auto falsee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
+		a_location->f_nil_tail(arguments);
 		return engine.f_new<t_instance>(condition, truee, falsee);
 	}
 } v_if;
@@ -270,9 +275,9 @@ struct : t_static
 		virtual void f_destruct(gc::t_collector& a_collector)
 		{
 		}
-		virtual std::wstring f_string() const
+		virtual void f_dump(const t_dump& a_dump) const
 		{
-			return t_object::f_string();
+			t_object::f_dump(a_dump);
 		}
 	};
 
@@ -290,7 +295,7 @@ struct : t_static
 		a_engine.v_used -= a_arguments;
 		if (a_arguments > 0)
 			for (size_t i = 0;;) {
-				std::wcout << lilis::f_string(a_engine.v_used[i]);
+				std::wcout << a_engine.v_used[i];
 				if (++i >= a_arguments) break;
 				std::wcout << L' ';
 			}
@@ -384,7 +389,7 @@ struct : t_static
 		auto tail = a_engine.f_pointer(a_tail);
 		auto pair = a_engine.f_pointer(f_cast<t_pair>(a_list));
 		auto list = a_engine.f_pointer(a_engine.f_new<t_pair>(a_engine.f_pointer(pair->v_head), nullptr));
-		auto last = a_engine.f_pointer<t_pair>(list);
+		auto last = a_engine.f_pointer(list.v_value);
 		while (pair->v_tail) {
 			pair = f_cast<t_pair>(pair->v_tail);
 			f_push(a_engine, last, pair->v_head);
@@ -414,26 +419,26 @@ struct : t_static
 
 }
 
-t_object* f_unquasiquote(t_code& a_code, t_object* a_value)
+t_object* f_unquasiquote(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_object* a_value)
 {
 	auto& engine = a_code.v_engine;
 	if (auto p = dynamic_cast<t_pair*>(a_value)) {
 		auto pair = engine.f_pointer(p);
-		auto tail = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, pair->v_tail)), nullptr));
+		auto tail = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, a_location, pair->v_tail)), nullptr));
 		if (auto p = dynamic_cast<t_unquote_splicing*>(pair->v_head))
 			return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_append,
-				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code.f_render(p->v_value, {})), tail))
+				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code.f_render(p->v_value, a_location)), tail))
 			)));
 		else
 			return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_cons,
-				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, pair->v_head)), tail))
+				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, a_location, pair->v_head)), tail))
 			)));
 	}
 	if (auto p = dynamic_cast<t_quote*>(a_value))
 		return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_quote,
-			engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, p->v_value)), nullptr))
+			engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, a_location, p->v_value)), nullptr))
 		)));
-	if (auto p = dynamic_cast<t_unquote*>(a_value)) return a_code.f_render(p->v_value, {});
+	if (auto p = dynamic_cast<t_unquote*>(a_value)) return a_code.f_render(p->v_value, a_location);
 	return engine.f_new<t_quote>(engine.f_pointer(a_value));
 }
 

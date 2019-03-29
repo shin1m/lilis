@@ -193,7 +193,7 @@ void t_engine::f_run(t_holder<t_module>* a_module, t_pair* a_expressions)
 	auto expressions = f_pointer(a_expressions);
 	auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, f_pointer(a_module)));
 	(*code)->v_imports.push_back(v_global);
-	(*code)->f_compile({}, expressions);
+	(*code)->f_compile(std::make_shared<t_at_file>(std::filesystem::path(), t_at()), expressions);
 	f_run(*code, nullptr);
 }
 

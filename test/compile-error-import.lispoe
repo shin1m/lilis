@@ -1,7 +1,7 @@
 caught: not found
-at .*/bad-macro\.lisp:2:5
-	  '\(conz 'x x\)
-	    \^
-at .*/compile-error-import\.lispo:2:1
-	\(m 'foo\)
-	\^
+at .*/bad-macro\.lisp:1:7
+	\(cons hello world\)
+	      \^
+at .*/compile-error-import\.lispo:1:9
+	\(import bad-macro\)
+	        \^

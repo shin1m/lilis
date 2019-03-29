@@ -4,18 +4,24 @@
 namespace lilis
 {
 
-t_object* t_parsed_pair::f_render(t_code& a_code, const t_location& a_location)
-{
-	auto thiz = a_code.v_engine.f_pointer(this);
-	return a_code.f_render(v_head, a_location.f_at_head(this))->f_apply(a_code, a_location, thiz);
-}
-
 void t_error::f_dump() const
 {
-	for (auto& x : v_backtrace) x.f_print();
+	for (auto& x : v_backtrace) x->f_print();
 }
 
-void t_location::f_print() const
+std::shared_ptr<t_location> t_at_file::f_at_head(t_pair* a_pair)
+{
+	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
+	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_head) : shared_from_this();
+}
+
+std::shared_ptr<t_location> t_at_file::f_at_tail(t_pair* a_pair)
+{
+	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
+	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_tail) : shared_from_this();
+}
+
+void t_at_file::f_print() const
 {
 	std::wfilebuf fb;
 	fb.open(v_path, std::ios_base::in);
@@ -26,6 +32,94 @@ void t_location::f_print() const
 	{
 		return fb.sbumpc();
 	});
+}
+
+void t_at_expression::f_scan(gc::t_collector& a_collector)
+{
+	v_expression = a_collector.f_forward(v_expression);
+}
+
+namespace
+{
+
+std::wostream& f_print_at_expression(t_object* a_expression)
+{
+	return std::wcerr << L"at expression" << std::endl << L'\t' << a_expression << std::endl;
+}
+
+struct t_at_list : t_at_expression
+{
+	t_pair* v_at;
+
+	t_at_list(t_engine& a_engine, t_object* a_expression, t_pair* a_at) : t_at_expression(a_engine, a_expression), v_at(a_at)
+	{
+	}
+	virtual void f_scan(gc::t_collector& a_collector)
+	{
+		t_at_expression::f_scan(a_collector);
+		v_at = a_collector.f_forward(v_at);
+	}
+	void f_print_at_list(std::function<void(const t_pair*)>&& a_at_head, std::function<void(const t_pair*)>&& a_at_tail) const
+	{
+		f_print_at_expression(v_expression) << L'\t';
+		try {
+			lilis::f_dump(v_expression, {
+				[&](auto x)
+				{
+					for (auto c : x) std::wcerr << (std::iswspace(c) ? c : L' ');
+				}, std::move(a_at_head), std::move(a_at_tail)
+			});
+		} catch (nullptr_t) {
+		}
+		std::wcerr << L'^' << std::endl;
+	}
+};
+
+struct t_at_head : t_at_list
+{
+	using t_at_list::t_at_list;
+	virtual void f_print() const
+	{
+		f_print_at_list([&](auto x)
+		{
+			if (x == v_at) throw nullptr;
+		},
+		[&](auto)
+		{
+		});
+	}
+};
+
+struct t_at_tail : t_at_list
+{
+	using t_at_list::t_at_list;
+	virtual void f_print() const
+	{
+		f_print_at_list([&](auto)
+		{
+		},
+		[&](auto x)
+		{
+			if (x == v_at) throw nullptr;
+		});
+	}
+};
+
+}
+
+std::shared_ptr<t_location> t_at_expression::f_at_head(t_pair* a_pair)
+{
+	return std::make_shared<t_at_head>(v_engine, v_expression, a_pair);
+}
+
+std::shared_ptr<t_location> t_at_expression::f_at_tail(t_pair* a_pair)
+{
+	return std::make_shared<t_at_tail>(v_engine, v_expression, a_pair);
+}
+
+void t_at_expression::f_print() const
+{
+	f_print_at_expression(v_expression) << L"\t^" << std::endl;
 }
 
 namespace
@@ -131,9 +225,9 @@ void t_code::f_scan()
 	for (auto i : v_objects) v_instructions[i] = v_engine.f_forward(static_cast<t_object*>(v_instructions[i]));
 }
 
-t_object* t_code::f_resolve(t_symbol* a_symbol, const t_location& a_location) const
+t_object* t_code::f_resolve(t_symbol* a_symbol, const std::shared_ptr<t_location>& a_location) const
 {
-	return a_location.f_try([&]
+	return a_location->f_try([&]
 	{
 		for (auto code = this;; code = *code->v_outer) {
 			if (auto p = code->v_bindings.f_find(a_symbol)) return p;
@@ -144,16 +238,16 @@ t_object* t_code::f_resolve(t_symbol* a_symbol, const t_location& a_location) co
 	});
 }
 
-void t_code::f_compile(const t_location& a_location, t_pair* a_body)
+void t_code::f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_body)
 {
 	t_emit emit{this};
 	if (a_body) {
 		auto body = v_engine.f_pointer(a_body);
-		for (; body->v_tail; body = a_location.f_cast_tail<t_pair>(body)) {
-			f_render(body->v_head, a_location.f_at_head(body))->f_emit(emit, 0, false);
+		for (; body->v_tail; body = a_location->f_cast_tail<t_pair>(body)) {
+			f_render(body->v_head, a_location->f_at_head(body))->f_emit(emit, 0, false);
 			emit(e_instruction__POP, 0);
 		}
-		f_render(body->v_head, a_location.f_at_head(body))->f_emit(emit, 0, true);
+		f_render(body->v_head, a_location->f_at_head(body))->f_emit(emit, 0, true);
 	} else {
 		emit(e_instruction__PUSH, 1)(static_cast<t_object*>(nullptr));
 	}
@@ -164,28 +258,28 @@ void t_code::f_compile(const t_location& a_location, t_pair* a_body)
 	}
 }
 
-t_holder<t_code>* t_code::f_new(const t_location& a_location, t_pair* a_pair)
+t_holder<t_code>* t_code::f_new(const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 {
-	auto body = v_engine.f_pointer(a_location.f_cast_tail<t_pair>(a_pair));
+	auto body = v_engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
 	auto code = v_engine.f_pointer(v_engine.f_new<t_holder<t_code>>(v_engine, v_this, v_module));
-	auto location = a_location.f_at_head(body);
+	auto location = a_location->f_at_head(body);
 	for (auto arguments = v_engine.f_pointer(body->v_head); arguments;) {
 		auto symbol = v_engine.f_pointer(dynamic_cast<t_symbol*>(arguments.v_value));
 		if (symbol) {
 			(*code)->v_rest = true;
 			arguments = nullptr;
 		} else {
-			auto pair = location.f_cast<t_pair>(arguments.v_value);
-			symbol = a_location.f_cast_head<t_symbol>(pair);
+			auto pair = location->f_cast<t_pair>(arguments.v_value);
+			symbol = a_location->f_cast_head<t_symbol>(pair);
 			arguments = pair->v_tail;
-			location = a_location.f_at_tail(pair);
+			location = a_location->f_at_tail(pair);
 			++(*code)->v_arguments;
 		}
 		(*code)->v_bindings.emplace(symbol, v_engine.f_new<t_local>(code, (*code)->v_locals.size()));
 		(*code)->v_locals.push_back(symbol);
 	}
-	location = a_location.f_at_tail(body);
-	(*code)->f_compile(location, body->v_tail ? location.f_cast<t_pair>(body->v_tail) : nullptr);
+	location = a_location->f_at_tail(body);
+	(*code)->f_compile(location, body->v_tail ? location->f_cast<t_pair>(body->v_tail) : nullptr);
 	return code;
 }
 

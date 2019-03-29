@@ -56,7 +56,7 @@ struct t_parser
 	void f_throw [[noreturn]] (const std::string& a_message) const
 	{
 		t_error error(a_message);
-		error.v_backtrace.push_back({v_path, v_at});
+		error.v_backtrace.push_back(std::make_shared<t_at_file>(v_path, v_at));
 		throw error;
 	}
 	t_object* f_expression();
@@ -82,7 +82,7 @@ struct t_parser
 	{
 		if (v_c == WEOF) return nullptr;
 		auto list = v_engine.f_pointer(f_head());
-		auto last = v_engine.f_pointer<t_parsed_pair>(list);
+		auto last = v_engine.f_pointer(list.v_value);
 		while (v_c != WEOF) f_push(last);
 		last->v_where_tail = v_at;
 		return list;
@@ -155,7 +155,7 @@ t_object* t_parser<T_get>::f_expression()
 			auto list = v_engine.f_pointer<t_parsed_pair>(nullptr);
 			if (v_c != L')') {
 				list = f_head();
-				for (auto last = v_engine.f_pointer<t_parsed_pair>(list);;) {
+				for (auto last = v_engine.f_pointer(list.v_value);;) {
 					if (v_c == L')') {
 						last->v_where_tail = v_at;
 						break;

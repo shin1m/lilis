@@ -111,13 +111,13 @@ struct t_code
 	{
 	}
 	void f_scan();
-	t_object* f_render(t_object* a_value, const t_location& a_location)
+	t_object* f_render(t_object* a_value, const std::shared_ptr<t_location>& a_location)
 	{
 		return a_value ? a_value->f_render(*this, a_location) : v_engine.f_new<t_quote>(nullptr);
 	}
-	t_object* f_resolve(t_symbol* a_symbol, const t_location& a_location) const;
-	void f_compile(const t_location& a_location, t_pair* a_body);
-	t_holder<t_code>* f_new(const t_location& a_location, t_pair* a_pair);
+	t_object* f_resolve(t_symbol* a_symbol, const std::shared_ptr<t_location>& a_location) const;
+	void f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_body);
+	t_holder<t_code>* f_new(const std::shared_ptr<t_location>& a_location, t_pair* a_pair);
 	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments)
 	{
 		if (a_rest) {
@@ -181,12 +181,11 @@ struct t_parsed_pair : t_object_of<t_parsed_pair, t_pair>
 	t_parsed_pair(t_object* a_head, const std::filesystem::path& a_path, const t_at& a_where_head) : t_object_of<t_parsed_pair, t_pair>(a_head, nullptr), v_path(a_path), v_where_head(a_where_head)
 	{
 	}
-	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
 };
 
 struct t_error : std::runtime_error
 {
-	std::list<t_location> v_backtrace;
+	std::list<std::shared_ptr<t_location>> v_backtrace;
 
 	using std::runtime_error::runtime_error;
 	void f_dump() const;
@@ -200,33 +199,24 @@ inline T* f_cast(U* a_p)
 	return p;
 }
 
-struct t_location
+struct t_location : std::enable_shared_from_this<t_location>
 {
-	std::filesystem::path v_path;
-	t_at v_at;
-
-	t_location f_at_head(t_pair* a_pair) const
-	{
-		auto p = dynamic_cast<t_parsed_pair*>(a_pair);
-		return p ? t_location{p->v_path, p->v_where_head} : *this;
-	}
-	t_location f_at_tail(t_pair* a_pair) const
-	{
-		auto p = dynamic_cast<t_parsed_pair*>(a_pair);
-		return p ? t_location{p->v_path, p->v_where_tail} : *this;
-	}
+	virtual ~t_location() = default;
+	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair) = 0;
+	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair) = 0;
+	virtual void f_print() const = 0;
 	template<typename T>
-	auto f_try(T&& a_do) const
+	auto f_try(T&& a_do)
 	{
 		try {
 			return a_do();
 		} catch (t_error& e) {
-			e.v_backtrace.push_back({v_path, v_at});
+			e.v_backtrace.push_back(shared_from_this());
 			throw;
 		}
 	}
 	template<typename T, typename U>
-	T* f_cast(U* a_p) const
+	T* f_cast(U* a_p)
 	{
 		return f_try([&]
 		{
@@ -234,24 +224,67 @@ struct t_location
 		});
 	}
 	template<typename T>
-	T* f_cast_head(t_pair* a_p) const
+	T* f_cast_head(t_pair* a_p)
 	{
-		return f_at_head(a_p).f_cast<T>(a_p->v_head);
+		return f_at_head(a_p)->f_cast<T>(a_p->v_head);
 	}
 	template<typename T>
-	T* f_cast_tail(t_pair* a_p) const
+	T* f_cast_tail(t_pair* a_p)
 	{
-		return f_at_tail(a_p).f_cast<T>(a_p->v_tail);
+		return f_at_tail(a_p)->f_cast<T>(a_p->v_tail);
 	}
-	void f_nil_tail(t_pair* a_p) const
+	void f_nil_tail(t_pair* a_p)
 	{
-		f_at_tail(a_p).f_try([&]
+		f_at_tail(a_p)->f_try([&]
 		{
 			if (a_p->v_tail) throw t_error("must be nil");
 		});
 	}
-	void f_print() const;
 };
+
+struct t_at_file : t_location
+{
+	std::filesystem::path v_path;
+	t_at v_at;
+
+	t_at_file(const std::filesystem::path& a_path, const t_at& a_at) : v_path(a_path), v_at(a_at)
+	{
+	}
+	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair);
+	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair);
+	virtual void f_print() const;
+};
+
+struct t_at_expression : t_location, gc::t_root
+{
+	t_engine& v_engine;
+	t_object* v_expression;
+
+	t_at_expression(t_engine& a_engine, t_object* a_expression) : gc::t_root(a_engine), v_engine(a_engine), v_expression(a_expression)
+	{
+	}
+	virtual void f_scan(gc::t_collector& a_collector);
+	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair);
+	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair);
+	virtual void f_print() const;
+};
+
+inline std::wostream& operator<<(std::wostream& a_out, t_object* a_value)
+{
+	f_dump(a_value, {
+		[&](auto x)
+		{
+			a_out << x;
+		},
+		[&](auto)
+		{
+		},
+		[&](auto)
+		{
+		}
+	});
+	return a_out;
+}
 
 struct t_call : t_with_value<t_object_of<t_call>, t_pair>
 {
@@ -313,11 +346,6 @@ struct t_emit
 		return *this;
 	}
 };
-
-inline std::wstring f_string(t_object* a_value)
-{
-	return a_value ? a_value->f_string() : L"()"s;
-}
 
 }
 

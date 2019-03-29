@@ -2,11 +2,14 @@
 #define LILIS__OBJECTS_H
 
 #include "gc.h"
+#include <functional>
 #include <map>
 #include <string>
 
 namespace lilis
 {
+
+using namespace std::literals;
 
 struct t_engine;
 struct t_code;
@@ -14,13 +17,20 @@ struct t_location;
 struct t_pair;
 struct t_emit;
 
+struct t_dump
+{
+	std::function<void(std::wstring_view)> v_put;
+	std::function<void(const t_pair*)> v_head;
+	std::function<void(const t_pair*)> v_tail;
+};
+
 struct t_object : gc::t_object
 {
-	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
-	virtual t_object* f_apply(t_code& a_code, const t_location& a_location, t_pair* a_pair);
+	virtual t_object* f_render(t_code& a_code, const std::shared_ptr<t_location>& a_location);
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair);
 	virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 	virtual void f_call(t_engine& a_engine, size_t a_arguments);
-	virtual std::wstring f_string() const;
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 template<typename T, typename T_base = t_object>
@@ -46,8 +56,8 @@ struct t_symbol : t_object_of<t_symbol>
 	}
 	virtual void f_scan(gc::t_collector& a_collector);
 	virtual void f_destruct(gc::t_collector& a_collector);
-	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
-	virtual std::wstring f_string() const;
+	virtual t_object* f_render(t_code& a_code, const std::shared_ptr<t_location>& a_location);
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 struct t_pair : t_object_of<t_pair>
@@ -59,8 +69,8 @@ struct t_pair : t_object_of<t_pair>
 	{
 	}
 	virtual void f_scan(gc::t_collector& a_collector);
-	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
-	virtual std::wstring f_string() const;
+	virtual t_object* f_render(t_code& a_code, const std::shared_ptr<t_location>& a_location);
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 template<typename T_base, typename T>
@@ -83,27 +93,35 @@ struct t_quote : t_with_value<t_object_of<t_quote>, t_object>
 {
 	using t_base::t_base;
 	virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
-	virtual std::wstring f_string() const;
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 struct t_unquote : t_with_value<t_object_of<t_unquote>, t_object>
 {
 	using t_base::t_base;
-	virtual std::wstring f_string() const;
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 struct t_unquote_splicing : t_unquote
 {
 	using t_unquote::t_unquote;
-	virtual std::wstring f_string() const;
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 {
 	using t_base::t_base;
-	virtual t_object* f_render(t_code& a_code, const t_location& a_location);
-	virtual std::wstring f_string() const;
+	virtual t_object* f_render(t_code& a_code, const std::shared_ptr<t_location>& a_location);
+	virtual void f_dump(const t_dump& a_dump) const;
 };
+
+inline void f_dump(t_object* a_value, const t_dump& a_dump)
+{
+	if (a_value)
+		a_value->f_dump(a_dump);
+	else
+		a_dump.v_put(L"()"sv);
+}
 
 inline void f_push(gc::t_collector& a_collector, gc::t_pointer<t_pair>& a_p, t_object* a_value)
 {

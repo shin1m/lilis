@@ -1,4 +1,4 @@
 (define-macro m (x)
-  '(conz 'x x)
+  `(conz ,x '(world))
 )
-(m 'foo)
+(print (m 'hello))

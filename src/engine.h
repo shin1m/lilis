@@ -7,8 +7,6 @@
 namespace lilis
 {
 
-using namespace std::literals;
-
 struct t_scope;
 struct t_module;
 struct t_code;
