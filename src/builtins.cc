@@ -167,29 +167,29 @@ struct : t_static
 	struct t_instance : t_object_of<t_instance>
 	{
 		t_object* v_condition;
-		t_object* v_true;
-		t_object* v_false;
+		t_object* v_then;
+		t_object* v_else;
 
-		t_instance(t_object* a_condition, t_object* a_true, t_object* a_false) : v_condition(a_condition), v_true(a_true), v_false(a_false)
+		t_instance(t_object* a_condition, t_object* a_then, t_object* a_else) : v_condition(a_condition), v_then(a_then), v_else(a_else)
 		{
 		}
 		virtual void f_scan(gc::t_collector& a_collector)
 		{
 			v_condition = a_collector.f_forward(v_condition);
-			v_true = a_collector.f_forward(v_true);
-			v_false = a_collector.f_forward(v_false);
+			v_then = a_collector.f_forward(v_then);
+			v_else = a_collector.f_forward(v_else);
 		}
 		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 		{
 			v_condition->f_emit(a_emit, a_stack, false);
 			auto& label0 = a_emit.v_labels.emplace_back();
 			a_emit(e_instruction__BRANCH, a_stack)(label0);
-			v_true->f_emit(a_emit, a_stack, a_tail);
+			v_then->f_emit(a_emit, a_stack, a_tail);
 			auto& label1 = a_emit.v_labels.emplace_back();
 			a_emit(e_instruction__JUMP, a_stack)(label1);
 			label0.v_target = a_emit.v_code->v_instructions.size();
-			if (v_false)
-				v_false->f_emit(a_emit, a_stack, a_tail);
+			if (v_else)
+				v_else->f_emit(a_emit, a_stack, a_tail);
 			else
 				a_emit(e_instruction__PUSH, a_stack + 1)(static_cast<t_object*>(nullptr));
 			label1.v_target = a_emit.v_code->v_instructions.size();
@@ -202,12 +202,12 @@ struct : t_static
 		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
 		auto condition = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
 		arguments = a_location->f_cast_tail<t_pair>(arguments);
-		auto truee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
-		if (!arguments->v_tail) return engine.f_new<t_instance>(condition, truee, nullptr);
+		auto then = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
+		if (!arguments->v_tail) return engine.f_new<t_instance>(condition, then, nullptr);
 		arguments = a_location->f_cast_tail<t_pair>(arguments);
-		auto falsee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
+		auto elsee = engine.f_pointer(a_code.f_render(arguments->v_head, a_location->f_at_head(arguments)));
 		a_location->f_nil_tail(arguments);
-		return engine.f_new<t_instance>(condition, truee, falsee);
+		return engine.f_new<t_instance>(condition, then, elsee);
 	}
 } v_if;
 
