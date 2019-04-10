@@ -187,10 +187,10 @@ void t_scope::f_scan(gc::t_collector& a_collector)
 
 size_t t_code::t_local::f_outer(t_code* a_code) const
 {
-	for (size_t i = 0;; ++i) {
+	for (size_t i = 0;; a_code = *a_code->v_outer, ++i) {
 		if (a_code == *v_value) return i;
+		if (a_code->v_macro) throw t_error("not available at compile time");
 		if (!a_code->v_outer) throw t_error("out of scope");
-		a_code = *a_code->v_outer;
 	}
 }
 
@@ -238,7 +238,7 @@ t_object* t_code::f_resolve(t_symbol* a_symbol, const std::shared_ptr<t_location
 	});
 }
 
-void t_code::f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_body)
+void t_code::f_compile_body(const std::shared_ptr<t_location>& a_location, t_pair* a_body)
 {
 	t_emit emit{this};
 	if (a_body) {
@@ -251,36 +251,30 @@ void t_code::f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_
 	} else {
 		emit(e_instruction__PUSH, 1)(static_cast<t_object*>(nullptr));
 	}
-	emit(e_instruction__RETURN, 0);
-	for (auto& x : emit.v_labels) {
-		auto p = v_instructions.data() + x.v_target;
-		for (auto i : x) v_instructions[i] = p;
-	}
+	emit.f_end();
 }
 
-t_holder<t_code>* t_code::f_new(const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
+void t_code::f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 {
 	auto body = v_engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
-	auto code = v_engine.f_pointer(v_engine.f_new<t_holder<t_code>>(v_engine, v_this, v_module));
 	auto location = a_location->f_at_head(body);
 	for (auto arguments = v_engine.f_pointer(body->v_head); arguments;) {
 		auto symbol = v_engine.f_pointer(dynamic_cast<t_symbol*>(arguments.v_value));
 		if (symbol) {
-			(*code)->v_rest = true;
+			v_rest = true;
 			arguments = nullptr;
 		} else {
 			auto pair = location->f_cast<t_pair>(arguments.v_value);
 			symbol = a_location->f_cast_head<t_symbol>(pair);
 			arguments = pair->v_tail;
 			location = a_location->f_at_tail(pair);
-			++(*code)->v_arguments;
+			++v_arguments;
 		}
-		(*code)->v_bindings.emplace(symbol, v_engine.f_new<t_local>(code, (*code)->v_locals.size()));
-		(*code)->v_locals.push_back(symbol);
+		v_bindings.emplace(symbol, v_engine.f_new<t_local>(v_this, v_locals.size()));
+		v_locals.push_back(symbol);
 	}
 	location = a_location->f_at_tail(body);
-	(*code)->f_compile(location, body->v_tail ? location->f_cast<t_pair>(body->v_tail) : nullptr);
-	return code;
+	f_compile_body(location, body->v_tail ? location->f_cast<t_pair>(body->v_tail) : nullptr);
 }
 
 void t_call::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)

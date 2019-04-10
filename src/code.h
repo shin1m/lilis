@@ -102,6 +102,7 @@ struct t_code
 	std::vector<t_symbol*> v_locals;
 	size_t v_arguments = 0;
 	bool v_rest = false;
+	bool v_macro = false;
 	t_bindings v_bindings;
 	std::vector<void*> v_instructions;
 	std::vector<size_t> v_objects;
@@ -116,8 +117,12 @@ struct t_code
 		return a_value ? a_value->f_render(*this, a_location) : v_engine.f_new<t_quote>(nullptr);
 	}
 	t_object* f_resolve(t_symbol* a_symbol, const std::shared_ptr<t_location>& a_location) const;
-	void f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_body);
-	t_holder<t_code>* f_new(const std::shared_ptr<t_location>& a_location, t_pair* a_pair);
+	void f_compile_body(const std::shared_ptr<t_location>& a_location, t_pair* a_body);
+	void f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_pair);
+	t_holder<t_code>* f_new() const
+	{
+		return v_engine.f_new<t_holder<t_code>>(v_engine, v_this, v_module);
+	}
 	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments)
 	{
 		if (a_rest) {
@@ -320,6 +325,7 @@ struct t_emit
 	};
 
 	t_code* v_code;
+	t_holder<t_code>* v_boundary = nullptr;
 	std::list<t_label> v_labels;
 
 	t_emit& operator()(t_instruction a_instruction, size_t a_stack)
@@ -344,6 +350,14 @@ struct t_emit
 		a_value.push_back(v_code->v_instructions.size());
 		v_code->v_instructions.push_back(nullptr);
 		return *this;
+	}
+	void f_end()
+	{
+		(*this)(e_instruction__RETURN, 0);
+		for (auto& x : v_labels) {
+			auto p = v_code->v_instructions.data() + x.v_target;
+			for (auto i : x) v_code->v_instructions[i] = p;
+		}
 	}
 };
 

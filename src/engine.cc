@@ -35,6 +35,23 @@ size_t t_engine::f_expand(size_t a_arguments)
 	return a_arguments;
 }
 
+template<typename T>
+struct t_guard
+{
+	T v_f;
+
+	~t_guard()
+	{
+		v_f();
+	}
+};
+
+template<typename T>
+t_guard<T> f_guard(T&& a_f)
+{
+	return t_guard<T>{a_f};
+}
+
 void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 {
 	struct t_lambda : t_object_of<t_lambda>
@@ -63,12 +80,19 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 			(*v_code)->f_call(true, v_scope, a_arguments);
 		}
 	};
-	auto top = --v_frame;
-	top->v_code = nullptr;
+	auto rewind = f_guard([&, used = v_used, frame = v_frame]
+	{
+		v_used = used;
+		v_frame = frame;
+	});
 	auto end = reinterpret_cast<void*>(e_instruction__END);
-	top->v_current = &end;
-	top->v_scope = nullptr;
-	top->v_stack = v_used;
+	{
+		auto top = --v_frame;
+		top->v_code = nullptr;
+		top->v_current = &end;
+		top->v_scope = nullptr;
+		top->v_stack = v_used;
+	}
 	*v_used++ = nullptr;
 	{
 		auto used = v_used;
@@ -188,12 +212,11 @@ t_pair* t_engine::f_parse(const std::filesystem::path& a_path)
 	});
 }
 
-void t_engine::f_run(t_holder<t_module>* a_module, t_pair* a_expressions)
+void t_engine::f_run(t_holder<t_module>* a_module, const gc::t_pointer<t_pair>& a_expressions)
 {
-	auto expressions = f_pointer(a_expressions);
 	auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, f_pointer(a_module)));
 	(*code)->v_imports.push_back(v_global);
-	(*code)->f_compile(std::make_shared<t_at_file>(std::filesystem::path(), t_at()), expressions);
+	(*code)->f_compile_body(std::make_shared<t_at_file>(std::filesystem::path(), t_at()), a_expressions);
 	f_run(*code, nullptr);
 }
 
@@ -207,7 +230,7 @@ t_holder<t_module>* t_engine::f_module(const std::filesystem::path& a_path, std:
 	i = v_modules.emplace_hint(i, a_name, nullptr);
 	i->second = f_new<t_holder<t_module>>(*this, path);
 	(*i->second)->v_entry = i;
-	f_run(i->second, expressions);
+	if (expressions) f_run(i->second, expressions);
 	return i->second;
 }
 

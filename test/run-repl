@@ -1,6 +1,6 @@
 #!/bin/bash
-RESULT=$($1 --debug --verbose <$2)
-IFS='' read -r -d '' EXPECTED <$2e
+RESULT=$($1 --debug --verbose $2 <$3)
+IFS='' read -r -d '' EXPECTED <$3e
 echo "$RESULT"
 NL='
 '

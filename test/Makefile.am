@@ -2,7 +2,7 @@ TEST_EXTENSIONS = .lisp .lispo .repl
 LISP_LOG_COMPILER = $(top_builddir)/src/lilis
 AM_LISP_LOG_FLAGS = --debug --verbose
 LISPO_LOG_COMPILER = $(srcdir)/run-lispo $(top_builddir)/src/lilis
-REPL_LOG_COMPILER = $(srcdir)/run-repl $(top_builddir)/src/lilis
+REPL_LOG_COMPILER = $(srcdir)/run-repl $(top_builddir)/src/lilis $(srcdir)/repl.lisp
 scripts = \
 	hello.lisp \
 	condition.lisp \
@@ -47,5 +47,6 @@ EXTRA_DIST = $(scripts) \
 	compile-error-export.lispoe \
 	bad-macro.lisp \
 	compile-error-import.lispoe \
+	repl.lisp \
 	run-repl \
 	repl-test.reple

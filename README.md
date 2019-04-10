@@ -56,7 +56,7 @@ Exports a binding to SYMBOL from the current module.
 
 Loads a module named SYMBOL.lisp and imports all exported symbols from the module into the current scope.
 
-### (if CONDITION THEN ELSE)
+### (if CONDITION THEN [ELSE])
 
     CONDITION: EXPRESSION
     THEN: EXPRESSION
@@ -95,6 +95,25 @@ The cdr part of the result is the result of this form.
 ### (gensym)
 
 Evaluates to a unique symbol object.
+
+### (module)
+
+Instantiates an anonymous module.
+
+### (read [EOF])
+
+    EOF: EXPRESSION
+
+Reads an S-expression from the standard input stream.
+When end of file is reached before an expression, evaluates to EOF if given or `()`.
+Otherwise, an expression read from the stream is the result of this form.
+
+### (eval EXPRESSION MODULE)
+
+    MODULE: EXPRESSION
+
+Evaluates EXPRESSION with MODULE.
+MODULE is a module instantiated by (module).
 
 ### (print EXPRESSIONS)
 

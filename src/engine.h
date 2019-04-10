@@ -76,7 +76,7 @@ struct t_engine : gc::t_collector
 	size_t f_expand(size_t a_arguments);
 	void f_run(t_code* a_code, t_object* a_arguments);
 	t_pair* f_parse(const std::filesystem::path& a_path);
-	void f_run(t_holder<t_module>* a_module, t_pair* a_expressions);
+	void f_run(t_holder<t_module>* a_module, const gc::t_pointer<t_pair>& a_expressions);
 	t_holder<t_module>* f_module(const std::filesystem::path& a_path, std::wstring_view a_name);
 };
 

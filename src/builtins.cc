@@ -1,16 +1,20 @@
 #include "code.h"
 #include "builtins.h"
+#include "parser.h"
 
 namespace lilis
 {
 
-t_object* t_static::f_forward(gc::t_collector& a_collector)
-{
-	return this;
-}
-
 namespace
 {
+
+struct t_static : t_object
+{
+	virtual t_object* f_forward(gc::t_collector& a_collector)
+	{
+		return this;
+	}
+};
 
 struct : t_static
 {
@@ -26,7 +30,10 @@ struct : t_static
 	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
 		auto& engine = a_code.v_engine;
-		return engine.f_new<t_instantiate>(engine.f_pointer(a_code.f_new(a_location, a_pair)));
+		auto pair = engine.f_pointer(a_pair);
+		auto code = engine.f_pointer(a_code.f_new());
+		(*code)->f_compile(a_location, pair);
+		return engine.f_new<t_instantiate>(code);
 	}
 } v_lambda;
 
@@ -37,7 +44,7 @@ struct : t_static
 		using t_base::t_base;
 		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 		{
-			auto body = a_emit.v_code->v_engine.f_pointer(v_value);
+			auto body = v_value;
 			for (; body->v_tail; body = static_cast<t_pair*>(body->v_tail)) {
 				body->v_head->f_emit(a_emit, a_stack, false);
 				a_emit(e_instruction__POP, a_stack);
@@ -61,44 +68,44 @@ struct : t_static
 	}
 } v_begin;
 
-}
-
-t_object* t_define::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
+struct : t_static
 {
-	auto& engine = a_code.v_engine;
-	auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
-	auto symbol = engine.f_pointer(a_location->f_cast_head<t_symbol>(arguments));
-	arguments = a_location->f_cast_tail<t_pair>(arguments);
-	auto expression = engine.f_pointer(arguments->v_head);
-	a_location->f_nil_tail(arguments);
-	auto local = engine.f_pointer(engine.f_new<t_code::t_local>(a_code.v_this, a_code.v_locals.size()));
-	a_code.v_bindings.emplace(symbol, local);
-	a_code.v_locals.push_back(symbol);
-	auto value = a_code.f_render(expression, a_location->f_at_head(arguments));
-	return local->f_render(a_code, value);
-}
-
-t_define v_define;
-
-t_object* t_set::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
-{
-	auto& engine = a_code.v_engine;
-	auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
-	auto location = a_location->f_at_head(arguments);
-	auto bound = engine.f_pointer(a_code.f_render(arguments->v_head, location));
-	location->f_try([&]
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
 	{
-		if (!dynamic_cast<t_mutable*>(bound.v_value)) throw t_error("not mutable");
-	});
-	arguments = a_location->f_cast_tail<t_pair>(arguments);
-	auto value = a_code.f_render(arguments->v_head, a_location->f_at_head(arguments));
-	a_location->f_nil_tail(arguments);
-	return dynamic_cast<t_mutable*>(bound.v_value)->f_render(a_code, value);
-}
+		auto& engine = a_code.v_engine;
+		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+		auto symbol = engine.f_pointer(a_location->f_cast_head<t_symbol>(arguments));
+		arguments = a_location->f_cast_tail<t_pair>(arguments);
+		auto expression = engine.f_pointer(arguments->v_head);
+		a_location->f_nil_tail(arguments);
+		auto local = engine.f_pointer(engine.f_new<t_code::t_local>(a_code.v_this, a_code.v_locals.size()));
+		a_code.v_bindings.emplace(symbol, local);
+		a_code.v_locals.push_back(symbol);
+		auto value = a_code.f_render(expression, a_location->f_at_head(arguments));
+		return local->f_render(a_code, value);
+	}
+} v_define;
 
-t_set v_set;
+struct : t_static
+{
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
+	{
+		auto& engine = a_code.v_engine;
+		auto arguments = engine.f_pointer(a_location->f_cast_tail<t_pair>(a_pair));
+		auto location = a_location->f_at_head(arguments);
+		auto bound = engine.f_pointer(a_code.f_render(arguments->v_head, location));
+		location->f_try([&]
+		{
+			if (!dynamic_cast<t_mutable*>(bound.v_value)) throw t_error("not mutable");
+		});
+		arguments = a_location->f_cast_tail<t_pair>(arguments);
+		auto value = a_code.f_render(arguments->v_head, a_location->f_at_head(arguments));
+		a_location->f_nil_tail(arguments);
+		return dynamic_cast<t_mutable*>(bound.v_value)->f_render(a_code, value);
+	}
+} v_set;
 
-t_object* t_macro::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
+struct : t_static
 {
 	struct t_instance : t_with_value<t_object_of<t_instance>, t_holder<t_code>>
 	{
@@ -114,17 +121,19 @@ t_object* t_macro::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_
 			});
 		}
 	};
-	auto& engine = a_code.v_engine;
-	auto at_tail = a_location->f_at_tail(a_pair);
-	auto arguments = engine.f_pointer(at_tail->f_cast<t_pair>(a_pair->v_tail));
-	auto symbol = engine.f_pointer(a_location->f_cast_head<t_symbol>(arguments));
-	return a_code.v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(engine.f_pointer(a_code.f_new(at_tail, arguments)))).first->second;
-}
 
-t_macro v_macro;
-
-namespace
-{
+	virtual t_object* f_apply(t_code& a_code, const std::shared_ptr<t_location>& a_location, t_pair* a_pair)
+	{
+		auto& engine = a_code.v_engine;
+		auto at_tail = a_location->f_at_tail(a_pair);
+		auto arguments = engine.f_pointer(at_tail->f_cast<t_pair>(a_pair->v_tail));
+		auto symbol = engine.f_pointer(a_location->f_cast_head<t_symbol>(arguments));
+		auto code = engine.f_pointer(a_code.f_new());
+		(*code)->v_macro = true;
+		(*code)->f_compile(at_tail, arguments);
+		return a_code.v_bindings.insert_or_assign(symbol, engine.f_new<t_instance>(code)).first->second;
+	}
+} v_macro;
 
 struct : t_static
 {
@@ -287,6 +296,83 @@ struct : t_static
 		a_engine.v_used[-1] = a_engine.f_new<t_instance>();
 	}
 } v_gensym;
+
+struct : t_static
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		if (a_arguments > 0) throw std::runtime_error("requires no arguments");
+		a_engine.v_used[-1] = a_engine.f_new<t_holder<t_module>>(a_engine, ""sv);
+	}
+} v_module;
+
+struct : t_static
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		if (a_arguments > 1) throw std::runtime_error("requires zero or one argument");
+		a_engine.v_used -= a_arguments;
+		a_engine.v_used[-1] = nullptr;
+		std::wcout << L"> ";
+		std::wstring cs;
+		std::getline(std::wcin, cs);
+		if (cs.empty()) {
+			if (!std::wcin && a_arguments > 0) a_engine.v_used[-1] = a_engine.v_used[0];
+			return;
+		}
+		cs.push_back(WEOF);
+		try {
+			auto get = [i = cs.begin()]() mutable
+			{
+				return *i++;
+			};
+			a_engine.v_used[-1] = t_parser<decltype(get)>(a_engine, "", std::move(get)).f_expression();
+		} catch (std::exception& e) {
+			std::wcerr << L"caught: " << e.what() << std::endl;
+			if (auto p = dynamic_cast<t_error*>(&e)) if (!p->v_backtrace.empty()) {
+				auto at = static_cast<t_at_file*>(p->v_backtrace.back().get())->v_at;
+				p->v_backtrace.pop_back();
+				p->f_dump();
+				decltype(cs.begin()) i;
+				at.f_print("", [&](long a_position)
+				{
+					i = cs.begin() + a_position;
+				}, [&]
+				{
+					return *i++;
+				});
+			}
+		}
+	}
+} v_read;
+
+struct : t_static
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		if (a_arguments != 2) throw std::runtime_error("requires two arguments");
+		a_engine.v_used -= 2;
+		a_engine.v_used[-1] = nullptr;
+		if (!a_engine.v_used[0]) return;
+		auto expression = a_engine.f_pointer(a_engine.v_used[0]);
+		auto module = a_engine.f_pointer(f_cast<t_holder<t_module>>(a_engine.v_used[1]));
+		try {
+			auto code = a_engine.f_pointer(a_engine.f_new<t_holder<t_code>>(a_engine, nullptr, module));
+			(*code)->v_imports.push_back(a_engine.v_global);
+			(*code)->v_imports.push_back(module);
+			{
+				t_emit emit{*code};
+				expression->f_render(**code, std::make_shared<t_at_expression>(a_engine, expression))->f_emit(emit, 0, true);
+				emit.f_end();
+			}
+			a_engine.f_run(*code, nullptr);
+			a_engine.v_used[-1] = a_engine.v_used[0];
+		} catch (std::exception& e) {
+			std::wcerr << L"caught: " << e.what() << std::endl;
+			if (auto p = dynamic_cast<t_error*>(&e)) p->f_dump();
+		}
+	}
+} v_eval;
 
 struct : t_static
 {
@@ -458,6 +544,9 @@ void f_define_builtins(t_module& a_module)
 	a_module.f_register(L"car"sv, &v_car);
 	a_module.f_register(L"cdr"sv, &v_cdr);
 	a_module.f_register(L"gensym"sv, &v_gensym);
+	a_module.f_register(L"module"sv, &v_module);
+	a_module.f_register(L"read"sv, &v_read);
+	a_module.f_register(L"eval"sv, &v_eval);
 	a_module.f_register(L"print"sv, &v_print);
 	a_module.f_register(L"call-with-prompt"sv, &prompt::v_call);
 	a_module.f_register(L"abort-to-prompt"sv, &prompt::v_abort);

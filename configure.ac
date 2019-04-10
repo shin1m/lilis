@@ -1,4 +1,4 @@
-AC_INIT([lilis], [201903])
+AC_INIT([lilis], [201904])
 AM_INIT_AUTOMAKE([foreign nostdinc dist-bzip2 no-dist-gzip])
 AC_CONFIG_SRCDIR([src/main.cc])
 
