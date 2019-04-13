@@ -15,7 +15,7 @@ t_object* t_object::f_apply(t_code& a_code, const std::shared_ptr<t_location>& a
 	auto arguments = engine.f_pointer(a_pair->v_tail);
 	auto location = a_location->f_at_tail(a_pair);
 	auto last = engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(this), nullptr));
-	auto call = engine.f_pointer(engine.f_new<t_call>(last));
+	auto call = engine.f_pointer(engine.f_new<t_call>(last, a_location));
 	while (auto p = dynamic_cast<t_pair*>(arguments.v_value)) {
 		arguments = p->v_tail;
 		location = a_location->f_at_tail(p);
@@ -35,7 +35,7 @@ void t_object::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 
 void t_object::f_call(t_engine& a_engine, size_t a_arguments)
 {
-	throw std::runtime_error("not callable");
+	throw t_error("not callable");
 }
 
 void t_object::f_dump(const t_dump& a_dump) const

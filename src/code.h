@@ -8,6 +8,14 @@
 namespace lilis
 {
 
+struct t_error : std::runtime_error
+{
+	std::list<std::shared_ptr<t_location>> v_backtrace;
+
+	using std::runtime_error::runtime_error;
+	void f_dump() const;
+};
+
 struct t_bindings : std::map<t_symbol*, t_object*>
 {
 	void f_scan(gc::t_collector& a_collector)
@@ -93,6 +101,16 @@ struct t_code
 		virtual t_object* f_render(t_code& a_code, t_object* a_expression);
 		virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 	};
+	struct t_address_location
+	{
+		size_t v_address;
+		std::shared_ptr<t_location> v_location;
+
+		bool operator<(size_t a_address) const
+		{
+			return v_address < a_address;
+		}
+	};
 
 	t_engine& v_engine;
 	t_holder<t_code>* v_this;
@@ -106,6 +124,7 @@ struct t_code
 	t_bindings v_bindings;
 	std::vector<void*> v_instructions;
 	std::vector<size_t> v_objects;
+	std::vector<t_address_location> v_locations;
 	size_t v_stack = 1;
 
 	t_code(t_engine& a_engine, t_holder<t_code>* a_this, t_holder<t_code>* a_outer, t_holder<t_module>* a_module) : v_engine(a_engine), v_this(a_this), v_outer(a_outer), v_module(a_module)
@@ -123,12 +142,13 @@ struct t_code
 	{
 		return v_engine.f_new<t_holder<t_code>>(v_engine, v_this, v_module);
 	}
+	std::shared_ptr<t_location> f_location(void** a_address) const;
 	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments)
 	{
 		if (a_rest) {
-			if (a_arguments < v_arguments) throw std::runtime_error("too few arguments");
+			if (a_arguments < v_arguments) throw t_error("too few arguments");
 		} else {
-			if (a_arguments != v_arguments) throw std::runtime_error("wrong number of arguments");
+			if (a_arguments != v_arguments) throw t_error("wrong number of arguments");
 		}
 		auto scope = v_engine.f_pointer(a_outer);
 		auto p = v_engine.f_allocate(sizeof(t_scope) + sizeof(t_object) * v_locals.size());
@@ -139,12 +159,10 @@ struct t_code
 			for (auto p = used + v_arguments; v_engine.v_used != p; --v_engine.v_used)
 				tail = scope->f_locals()[v_arguments] = v_engine.f_new<t_pair>(v_engine.v_used[-1], tail);
 		}
-		v_engine.v_used = used;
-		if (v_engine.v_frame <= v_engine.v_frames.get()) throw std::runtime_error("stack overflow");
+		v_engine.v_used = used--;
+		if (used + v_stack > v_engine.v_stack.get() + t_engine::V_STACK || v_engine.v_frame <= v_engine.v_frames.get()) throw t_error("stack overflow");
 		--v_engine.v_frame;
-		v_engine.v_frame->v_stack = --v_engine.v_used;
-		if (v_engine.v_frame->v_stack + v_stack > v_engine.v_stack.get() + t_engine::V_STACK) throw std::runtime_error("stack overflow");
-		v_engine.v_used = v_engine.v_frame->v_stack + 1;
+		v_engine.v_frame->v_stack = used;
 		v_engine.v_frame->v_code = v_this;
 		v_engine.v_frame->v_current = v_instructions.data();
 		v_engine.v_frame->v_scope = scope;
@@ -175,25 +193,6 @@ struct t_at
 		}
 		std::wcerr << L'^' << std::endl;
 	}
-};
-
-struct t_parsed_pair : t_object_of<t_parsed_pair, t_pair>
-{
-	std::filesystem::path v_path;
-	t_at v_where_head;
-	t_at v_where_tail;
-
-	t_parsed_pair(t_object* a_head, const std::filesystem::path& a_path, const t_at& a_where_head) : t_object_of<t_parsed_pair, t_pair>(a_head, nullptr), v_path(a_path), v_where_head(a_where_head)
-	{
-	}
-};
-
-struct t_error : std::runtime_error
-{
-	std::list<std::shared_ptr<t_location>> v_backtrace;
-
-	using std::runtime_error::runtime_error;
-	void f_dump() const;
 };
 
 template<typename T, typename U>
@@ -247,6 +246,17 @@ struct t_location : std::enable_shared_from_this<t_location>
 	}
 };
 
+struct t_parsed_pair : t_object_of<t_parsed_pair, t_pair>
+{
+	std::filesystem::path v_path;
+	t_at v_where_head;
+	t_at v_where_tail;
+
+	t_parsed_pair(t_object* a_head, const std::filesystem::path& a_path, const t_at& a_where_head) : t_object_of<t_parsed_pair, t_pair>(a_head, nullptr), v_path(a_path), v_where_head(a_where_head)
+	{
+	}
+};
+
 struct t_at_file : t_location
 {
 	std::filesystem::path v_path;
@@ -293,9 +303,12 @@ inline std::wostream& operator<<(std::wostream& a_out, t_object* a_value)
 
 struct t_call : t_with_value<t_object_of<t_call>, t_pair>
 {
+	std::shared_ptr<t_location> v_location;
 	bool v_expand = false;
 
-	using t_base::t_base;
+	t_call(t_pair* a_value, const std::shared_ptr<t_location>& a_location) : t_base(a_value), v_location(a_location)
+	{
+	}
 	virtual void f_emit(t_emit& a_emit, size_t a_stack, bool a_tail);
 };
 
@@ -358,6 +371,10 @@ struct t_emit
 			auto p = v_code->v_instructions.data() + x.v_target;
 			for (auto i : x) v_code->v_instructions[i] = p;
 		}
+	}
+	void f_at(const std::shared_ptr<t_location>& a_location)
+	{
+		v_code->v_locations.push_back({v_code->v_instructions.size(), a_location});
 	}
 };
 

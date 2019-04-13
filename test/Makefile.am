@@ -31,6 +31,7 @@ scripts = \
 	compile-error-macro.lispo \
 	compile-error-export.lispo \
 	compile-error-import.lispo \
+	runtime-error.lispo \
 	repl-test.repl
 TESTS = $(scripts)
 EXTRA_DIST = $(scripts) \
@@ -47,6 +48,7 @@ EXTRA_DIST = $(scripts) \
 	compile-error-export.lispoe \
 	bad-macro.lisp \
 	compile-error-import.lispoe \
+	runtime-error.lispoe \
 	repl.lisp \
 	run-repl \
 	repl-test.reple

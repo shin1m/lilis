@@ -20,38 +20,6 @@ t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 	return i->second = f_new<t_symbol>(i);
 }
 
-size_t t_engine::f_expand(size_t a_arguments)
-{
-	--a_arguments;
-	if (auto last = *--v_used)
-		while (true) {
-			auto pair = f_cast<t_pair>(last);
-			*v_used++ = pair->v_head;
-			last = pair->v_tail;
-			++a_arguments;
-			if (!last) break;
-			if (v_used >= v_stack.get() + V_STACK) throw std::runtime_error("stack overflow");
-		}
-	return a_arguments;
-}
-
-template<typename T>
-struct t_guard
-{
-	T v_f;
-
-	~t_guard()
-	{
-		v_f();
-	}
-};
-
-template<typename T>
-t_guard<T> f_guard(T&& a_f)
-{
-	return t_guard<T>{a_f};
-}
-
 void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 {
 	struct t_lambda : t_object_of<t_lambda>
@@ -80,125 +48,142 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 			(*v_code)->f_call(true, v_scope, a_arguments);
 		}
 	};
-	auto rewind = f_guard([&, used = v_used, frame = v_frame]
+	auto expand = [&](size_t a_arguments)
 	{
+		--a_arguments;
+		if (auto last = *--v_used)
+			while (true) {
+				auto pair = f_cast<t_pair>(last);
+				*v_used++ = pair->v_head;
+				last = pair->v_tail;
+				++a_arguments;
+				if (!last) break;
+				if (v_used >= v_stack.get() + V_STACK) throw t_error("stack overflow");
+			}
+		return a_arguments;
+	};
+	auto call = [&](bool a_expand)
+	{
+		auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
+		++v_frame->v_current;
+		auto callee = v_used[-1 - arguments];
+		if (!callee) throw t_error("calling nil");
+		callee->f_call(*this, a_expand ? expand(arguments) : arguments);
+	};
+	auto tail = [&](bool a_expand)
+	{
+		auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
+		v_used = std::copy(v_used - arguments - 1, v_used, v_frame->v_stack);
+		auto callee = *v_frame++->v_stack;
+		if (!callee) throw t_error("calling nil");
+		callee->f_call(*this, a_expand ? expand(arguments) : arguments);
+	};
+	auto used = v_used;
+	auto frame = v_frame;
+	try {
+		auto end = reinterpret_cast<void*>(e_instruction__END);
+		{
+			auto top = --v_frame;
+			top->v_code = nullptr;
+			top->v_current = &end;
+			top->v_scope = nullptr;
+			top->v_stack = v_used;
+		}
+		*v_used++ = nullptr;
+		{
+			auto used = v_used;
+			while (auto p = dynamic_cast<t_pair*>(a_arguments)) {
+				*v_used++ = p->v_head;
+				a_arguments = p->v_tail;
+			}
+			if (a_arguments) {
+				*v_used++ = a_arguments;
+				expand(v_used - used);
+			}
+			a_code->f_call(a_code->v_rest, nullptr, v_used - used);
+		}
+		while (true) {
+			switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_frame->v_current))) {
+			case e_instruction__POP:
+				++v_frame->v_current;
+				--v_used;
+				break;
+			case e_instruction__PUSH:
+				*v_used++ = static_cast<t_object*>(*++v_frame->v_current);
+				++v_frame->v_current;
+				break;
+			case e_instruction__GET:
+				{
+					auto outer = reinterpret_cast<size_t>(*++v_frame->v_current);
+					auto index = reinterpret_cast<size_t>(*++v_frame->v_current);
+					++v_frame->v_current;
+					auto scope = v_frame->v_scope;
+					for (; outer > 0; --outer) scope = scope->v_outer;
+					*v_used++ = scope->f_locals()[index];
+				}
+				break;
+			case e_instruction__SET:
+				{
+					auto outer = reinterpret_cast<size_t>(*++v_frame->v_current);
+					auto index = reinterpret_cast<size_t>(*++v_frame->v_current);
+					++v_frame->v_current;
+					auto scope = v_frame->v_scope;
+					for (; outer > 0; --outer) scope = scope->v_outer;
+					scope->f_locals()[index] = v_used[-1];
+				}
+				break;
+			case e_instruction__CALL:
+				call(false);
+				break;
+			case e_instruction__CALL_WITH_EXPANSION:
+				call(true);
+				break;
+			case e_instruction__CALL_TAIL:
+				tail(false);
+				break;
+			case e_instruction__CALL_TAIL_WITH_EXPANSION:
+				tail(true);
+				break;
+			case e_instruction__RETURN:
+				*v_frame->v_stack = v_used[-1];
+				v_used = v_frame->v_stack + 1;
+				++v_frame;
+				break;
+			case e_instruction__LAMBDA:
+				*v_used++ = f_new<t_lambda>(*reinterpret_cast<t_holder<t_code>**>(++v_frame->v_current), v_frame->v_scope);
+				++v_frame->v_current;
+				break;
+			case e_instruction__LAMBDA_WITH_REST:
+				*v_used++ = f_new<t_lambda_with_rest>(*reinterpret_cast<t_holder<t_code>**>(++v_frame->v_current), v_frame->v_scope);
+				++v_frame->v_current;
+				break;
+			case e_instruction__JUMP:
+				v_frame->v_current = static_cast<void**>(*++v_frame->v_current);
+				break;
+			case e_instruction__BRANCH:
+				++v_frame->v_current;
+				if (*--v_used)
+					++v_frame->v_current;
+				else
+					v_frame->v_current = static_cast<void**>(*v_frame->v_current);
+				break;
+			case e_instruction__END:
+				--v_used;
+				++v_frame;
+				return;
+			}
+		}
+	} catch (std::exception& e) {
 		v_used = used;
-		v_frame = frame;
-	});
-	auto end = reinterpret_cast<void*>(e_instruction__END);
-	{
-		auto top = --v_frame;
-		top->v_code = nullptr;
-		top->v_current = &end;
-		top->v_scope = nullptr;
-		top->v_stack = v_used;
-	}
-	*v_used++ = nullptr;
-	{
-		auto used = v_used;
-		while (auto p = dynamic_cast<t_pair*>(a_arguments)) {
-			*v_used++ = p->v_head;
-			a_arguments = p->v_tail;
-		}
-		if (a_arguments) {
-			*v_used++ = a_arguments;
-			f_expand(v_used - used);
-		}
-		a_code->f_call(a_code->v_rest, nullptr, v_used - used);
-	}
-	while (true) {
-		switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_frame->v_current))) {
-		case e_instruction__POP:
-			++v_frame->v_current;
-			--v_used;
-			break;
-		case e_instruction__PUSH:
-			*v_used++ = static_cast<t_object*>(*++v_frame->v_current);
-			++v_frame->v_current;
-			break;
-		case e_instruction__GET:
-			{
-				auto outer = reinterpret_cast<size_t>(*++v_frame->v_current);
-				auto index = reinterpret_cast<size_t>(*++v_frame->v_current);
-				++v_frame->v_current;
-				auto scope = v_frame->v_scope;
-				for (; outer > 0; --outer) scope = scope->v_outer;
-				*v_used++ = scope->f_locals()[index];
-			}
-			break;
-		case e_instruction__SET:
-			{
-				auto outer = reinterpret_cast<size_t>(*++v_frame->v_current);
-				auto index = reinterpret_cast<size_t>(*++v_frame->v_current);
-				++v_frame->v_current;
-				auto scope = v_frame->v_scope;
-				for (; outer > 0; --outer) scope = scope->v_outer;
-				scope->f_locals()[index] = v_used[-1];
-			}
-			break;
-		case e_instruction__CALL:
-			{
-				auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
-				++v_frame->v_current;
-				auto callee = v_used[-1 - arguments];
-				if (!callee) throw std::runtime_error("calling nil");
-				callee->f_call(*this, arguments);
-			}
-			break;
-		case e_instruction__CALL_WITH_EXPANSION:
-			{
-				auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
-				++v_frame->v_current;
-				auto callee = v_used[-1 - arguments];
-				if (!callee) throw std::runtime_error("calling nil");
-				callee->f_call(*this, f_expand(arguments));
-			}
-			break;
-		case e_instruction__CALL_TAIL:
-			{
-				auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
-				v_used = std::copy(v_used - arguments - 1, v_used, v_frame->v_stack);
-				auto callee = *v_frame++->v_stack;
-				if (!callee) throw std::runtime_error("calling nil");
-				callee->f_call(*this, arguments);
-			}
-			break;
-		case e_instruction__CALL_TAIL_WITH_EXPANSION:
-			{
-				auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
-				v_used = std::copy(v_used - arguments - 1, v_used, v_frame->v_stack);
-				auto callee = *v_frame++->v_stack;
-				if (!callee) throw std::runtime_error("calling nil");
-				callee->f_call(*this, f_expand(arguments));
-			}
-			break;
-		case e_instruction__RETURN:
-			*v_frame->v_stack = v_used[-1];
-			v_used = v_frame->v_stack + 1;
+		auto rethrow = [&](t_error& a_e)
+		{
+			for (--frame; v_frame < frame; ++v_frame) a_e.v_backtrace.push_back((*v_frame->v_code)->f_location(v_frame->v_current));
 			++v_frame;
-			break;
-		case e_instruction__LAMBDA:
-			*v_used++ = f_new<t_lambda>(*reinterpret_cast<t_holder<t_code>**>(++v_frame->v_current), v_frame->v_scope);
-			++v_frame->v_current;
-			break;
-		case e_instruction__LAMBDA_WITH_REST:
-			*v_used++ = f_new<t_lambda_with_rest>(*reinterpret_cast<t_holder<t_code>**>(++v_frame->v_current), v_frame->v_scope);
-			++v_frame->v_current;
-			break;
-		case e_instruction__JUMP:
-			v_frame->v_current = static_cast<void**>(*++v_frame->v_current);
-			break;
-		case e_instruction__BRANCH:
-			++v_frame->v_current;
-			if (*--v_used)
-				++v_frame->v_current;
-			else
-				v_frame->v_current = static_cast<void**>(*v_frame->v_current);
-			break;
-		case e_instruction__END:
-			--v_used;
-			return;
-		}
+			throw a_e;
+		};
+		if (auto p = dynamic_cast<t_error*>(&e)) rethrow(*p);
+		t_error error(e.what());
+		rethrow(error);
 	}
 }
 

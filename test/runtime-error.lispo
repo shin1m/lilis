@@ -1,0 +1,7 @@
+(define foo (lambda (x y)
+  (cons (car x) y)
+))
+(define bar (lambda (x y)
+  (print (foo x y))
+))
+(print (bar 'foo ()))

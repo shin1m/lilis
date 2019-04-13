@@ -9,119 +9,6 @@ void t_error::f_dump() const
 	for (auto& x : v_backtrace) x->f_print();
 }
 
-std::shared_ptr<t_location> t_at_file::f_at_head(t_pair* a_pair)
-{
-	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
-	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_head) : shared_from_this();
-}
-
-std::shared_ptr<t_location> t_at_file::f_at_tail(t_pair* a_pair)
-{
-	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
-	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_tail) : shared_from_this();
-}
-
-void t_at_file::f_print() const
-{
-	std::wfilebuf fb;
-	fb.open(v_path, std::ios_base::in);
-	v_at.f_print(v_path.c_str(), [&](long a_position)
-	{
-		fb.pubseekpos(a_position);
-	}, [&]
-	{
-		return fb.sbumpc();
-	});
-}
-
-void t_at_expression::f_scan(gc::t_collector& a_collector)
-{
-	v_expression = a_collector.f_forward(v_expression);
-}
-
-namespace
-{
-
-std::wostream& f_print_at_expression(t_object* a_expression)
-{
-	return std::wcerr << L"at expression" << std::endl << L'\t' << a_expression << std::endl;
-}
-
-struct t_at_list : t_at_expression
-{
-	t_pair* v_at;
-
-	t_at_list(t_engine& a_engine, t_object* a_expression, t_pair* a_at) : t_at_expression(a_engine, a_expression), v_at(a_at)
-	{
-	}
-	virtual void f_scan(gc::t_collector& a_collector)
-	{
-		t_at_expression::f_scan(a_collector);
-		v_at = a_collector.f_forward(v_at);
-	}
-	void f_print_at_list(std::function<void(const t_pair*)>&& a_at_head, std::function<void(const t_pair*)>&& a_at_tail) const
-	{
-		f_print_at_expression(v_expression) << L'\t';
-		try {
-			lilis::f_dump(v_expression, {
-				[&](auto x)
-				{
-					for (auto c : x) std::wcerr << (std::iswspace(c) ? c : L' ');
-				}, std::move(a_at_head), std::move(a_at_tail)
-			});
-		} catch (nullptr_t) {
-		}
-		std::wcerr << L'^' << std::endl;
-	}
-};
-
-struct t_at_head : t_at_list
-{
-	using t_at_list::t_at_list;
-	virtual void f_print() const
-	{
-		f_print_at_list([&](auto x)
-		{
-			if (x == v_at) throw nullptr;
-		},
-		[&](auto)
-		{
-		});
-	}
-};
-
-struct t_at_tail : t_at_list
-{
-	using t_at_list::t_at_list;
-	virtual void f_print() const
-	{
-		f_print_at_list([&](auto)
-		{
-		},
-		[&](auto x)
-		{
-			if (x == v_at) throw nullptr;
-		});
-	}
-};
-
-}
-
-std::shared_ptr<t_location> t_at_expression::f_at_head(t_pair* a_pair)
-{
-	return std::make_shared<t_at_head>(v_engine, v_expression, a_pair);
-}
-
-std::shared_ptr<t_location> t_at_expression::f_at_tail(t_pair* a_pair)
-{
-	return std::make_shared<t_at_tail>(v_engine, v_expression, a_pair);
-}
-
-void t_at_expression::f_print() const
-{
-	f_print_at_expression(v_expression) << L"\t^" << std::endl;
-}
-
 namespace
 {
 
@@ -277,6 +164,125 @@ void t_code::f_compile(const std::shared_ptr<t_location>& a_location, t_pair* a_
 	f_compile_body(location, body->v_tail ? location->f_cast<t_pair>(body->v_tail) : nullptr);
 }
 
+std::shared_ptr<t_location> t_code::f_location(void** a_address) const
+{
+	auto i = std::lower_bound(v_locations.begin(), v_locations.end(), static_cast<size_t>(a_address - v_instructions.data()));
+	return i == v_locations.end() ? nullptr : i->v_location;
+}
+
+std::shared_ptr<t_location> t_at_file::f_at_head(t_pair* a_pair)
+{
+	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
+	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_head) : shared_from_this();
+}
+
+std::shared_ptr<t_location> t_at_file::f_at_tail(t_pair* a_pair)
+{
+	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
+	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_tail) : shared_from_this();
+}
+
+void t_at_file::f_print() const
+{
+	std::wfilebuf fb;
+	fb.open(v_path, std::ios_base::in);
+	v_at.f_print(v_path.c_str(), [&](long a_position)
+	{
+		fb.pubseekpos(a_position);
+	}, [&]
+	{
+		return fb.sbumpc();
+	});
+}
+
+void t_at_expression::f_scan(gc::t_collector& a_collector)
+{
+	v_expression = a_collector.f_forward(v_expression);
+}
+
+namespace
+{
+
+std::wostream& f_print_at_expression(t_object* a_expression)
+{
+	return std::wcerr << L"at expression" << std::endl << L'\t' << a_expression << std::endl;
+}
+
+struct t_at_list : t_at_expression
+{
+	t_pair* v_at;
+
+	t_at_list(t_engine& a_engine, t_object* a_expression, t_pair* a_at) : t_at_expression(a_engine, a_expression), v_at(a_at)
+	{
+	}
+	virtual void f_scan(gc::t_collector& a_collector)
+	{
+		t_at_expression::f_scan(a_collector);
+		v_at = a_collector.f_forward(v_at);
+	}
+	void f_print_at_list(std::function<void(const t_pair*)>&& a_at_head, std::function<void(const t_pair*)>&& a_at_tail) const
+	{
+		f_print_at_expression(v_expression) << L'\t';
+		try {
+			lilis::f_dump(v_expression, {
+				[&](auto x)
+				{
+					for (auto c : x) std::wcerr << (std::iswspace(c) ? c : L' ');
+				}, std::move(a_at_head), std::move(a_at_tail)
+			});
+		} catch (nullptr_t) {
+		}
+		std::wcerr << L'^' << std::endl;
+	}
+};
+
+struct t_at_head : t_at_list
+{
+	using t_at_list::t_at_list;
+	virtual void f_print() const
+	{
+		f_print_at_list([&](auto x)
+		{
+			if (x == v_at) throw nullptr;
+		},
+		[&](auto)
+		{
+		});
+	}
+};
+
+struct t_at_tail : t_at_list
+{
+	using t_at_list::t_at_list;
+	virtual void f_print() const
+	{
+		f_print_at_list([&](auto)
+		{
+		},
+		[&](auto x)
+		{
+			if (x == v_at) throw nullptr;
+		});
+	}
+};
+
+}
+
+std::shared_ptr<t_location> t_at_expression::f_at_head(t_pair* a_pair)
+{
+	return std::make_shared<t_at_head>(v_engine, v_expression, a_pair);
+}
+
+std::shared_ptr<t_location> t_at_expression::f_at_tail(t_pair* a_pair)
+{
+	return std::make_shared<t_at_tail>(v_engine, v_expression, a_pair);
+}
+
+void t_at_expression::f_print() const
+{
+	f_print_at_expression(v_expression) << L"\t^" << std::endl;
+}
+
 void t_call::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 {
 	v_value->v_head->f_emit(a_emit, a_stack, false);
@@ -285,6 +291,7 @@ void t_call::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 	int instruction = v_expand ? e_instruction__CALL_WITH_EXPANSION : e_instruction__CALL;
 	if (a_tail) instruction += e_instruction__CALL_TAIL - e_instruction__CALL;
 	a_emit(static_cast<t_instruction>(instruction), a_stack + 1)(n - a_stack);
+	a_emit.f_at(v_location);
 }
 
 }

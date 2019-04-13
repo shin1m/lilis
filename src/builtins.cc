@@ -224,7 +224,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw std::runtime_error("requires two arguments");
+		if (a_arguments != 2) throw t_error("requires OBJECT OBJECT");
 		a_engine.v_used -= 2;
 		a_engine.v_used[-1] = a_engine.v_used[0] == a_engine.v_used[1] ? this : nullptr;
 	}
@@ -234,7 +234,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
+		if (a_arguments != 1) throw t_error("requires OBJECT");
 		--a_engine.v_used;
 		a_engine.v_used[-1] = dynamic_cast<t_pair*>(a_engine.v_used[0]);
 	}
@@ -244,7 +244,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw std::runtime_error("requires two arguments");
+		if (a_arguments != 2) throw t_error("requires OBJECT OBJECT");
 		auto used = a_engine.v_used - 2;
 		used[-1] = a_engine.f_new<t_pair>(used[0], used[1]);
 		a_engine.v_used = used;
@@ -255,7 +255,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
+		if (a_arguments != 1) throw t_error("requires PAIR");
 		--a_engine.v_used;
 		a_engine.v_used[-1] = f_cast<t_pair>(a_engine.v_used[0])->v_head;
 	}
@@ -265,7 +265,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
+		if (a_arguments != 1) throw t_error("requires PAIR");
 		--a_engine.v_used;
 		a_engine.v_used[-1] = f_cast<t_pair>(a_engine.v_used[0])->v_tail;
 	}
@@ -292,7 +292,7 @@ struct : t_static
 
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments > 0) throw std::runtime_error("requires no arguments");
+		if (a_arguments > 0) throw t_error("requires no arguments");
 		a_engine.v_used[-1] = a_engine.f_new<t_instance>();
 	}
 } v_gensym;
@@ -301,7 +301,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments > 0) throw std::runtime_error("requires no arguments");
+		if (a_arguments > 0) throw t_error("requires no arguments");
 		a_engine.v_used[-1] = a_engine.f_new<t_holder<t_module>>(a_engine, ""sv);
 	}
 } v_module;
@@ -310,7 +310,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments > 1) throw std::runtime_error("requires zero or one argument");
+		if (a_arguments > 1) throw t_error("requires [EOF]");
 		a_engine.v_used -= a_arguments;
 		a_engine.v_used[-1] = nullptr;
 		std::wcout << L"> ";
@@ -350,7 +350,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw std::runtime_error("requires two arguments");
+		if (a_arguments != 2) throw t_error("requires OBJECT MODULE");
 		a_engine.v_used -= 2;
 		a_engine.v_used[-1] = nullptr;
 		if (!a_engine.v_used[0]) return;
@@ -417,7 +417,7 @@ namespace prompt
 		}
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			if (a_arguments != 1) throw std::runtime_error("requires an argument");
+			if (a_arguments != 1) throw t_error("requires OBJECT");
 			auto used = a_engine.v_used - 2;
 			auto value = used[1];
 			auto p = reinterpret_cast<t_object**>(this + 1);
@@ -434,8 +434,8 @@ namespace prompt
 
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			if (a_arguments != 3) throw std::runtime_error("requires three arguments");
-			if (a_engine.v_frame <= a_engine.v_frames.get()) throw std::runtime_error("stack overflow");
+			if (a_arguments != 3) throw t_error("requires TAG HANDLER THUNK");
+			if (a_engine.v_frame <= a_engine.v_frames.get()) throw t_error("stack overflow");
 			--a_engine.v_frame;
 			a_engine.v_frame->v_stack = a_engine.v_used - 4;
 			a_engine.v_frame->v_code = nullptr;
@@ -448,12 +448,12 @@ namespace prompt
 	{
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			if (a_arguments < 1) throw std::runtime_error("requires at least one argument");
+			if (a_arguments < 1) throw t_error("requires TAG [OBJECT...]");
 			auto tail = a_engine.v_used - a_arguments - 1;
 			auto frame = a_engine.v_frame;
 			while (!dynamic_cast<t_call*>(frame->v_stack[0]) || frame->v_stack[1] != tail[1])
 				if (++frame == a_engine.v_frames.get() + t_engine::V_FRAMES)
-					throw std::runtime_error("no matching prompt found");
+					throw t_error("no matching prompt found");
 			auto head = frame->v_stack;
 			auto stack = tail - head;
 			auto frames = ++frame - a_engine.v_frame;
@@ -486,7 +486,7 @@ struct : t_static
 
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw std::runtime_error("requires two arguments");
+		if (a_arguments != 2) throw t_error("requires PAIR OBJECT");
 		auto used = a_engine.v_used - 2;
 		used[-1] = f_append(a_engine, used[0], used[1]);
 		a_engine.v_used = used;
@@ -497,7 +497,7 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw std::runtime_error("requires an argument");
+		if (a_arguments != 1) throw t_error("requires OBJECT");
 		a_engine.v_used[-2] = a_engine.f_new<t_quote>(a_engine.v_used[-1]);
 		--a_engine.v_used;
 	}
@@ -514,16 +514,16 @@ t_object* f_unquasiquote(t_code& a_code, const std::shared_ptr<t_location>& a_lo
 		if (auto p = dynamic_cast<t_unquote_splicing*>(pair->v_head))
 			return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_append,
 				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(a_code.f_render(p->v_value, a_location)), tail))
-			)));
+			)), a_location);
 		else
 			return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_cons,
 				engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, a_location, pair->v_head)), tail))
-			)));
+			)), a_location);
 	}
 	if (auto p = dynamic_cast<t_quote*>(a_value))
 		return engine.f_new<t_call>(engine.f_pointer(engine.f_new<t_pair>(&v_quote,
 			engine.f_pointer(engine.f_new<t_pair>(engine.f_pointer(f_unquasiquote(a_code, a_location, p->v_value)), nullptr))
-		)));
+		)), a_location);
 	if (auto p = dynamic_cast<t_unquote*>(a_value)) return a_code.f_render(p->v_value, a_location);
 	return engine.f_new<t_quote>(engine.f_pointer(a_value));
 }

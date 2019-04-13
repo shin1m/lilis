@@ -73,7 +73,6 @@ struct t_engine : gc::t_collector
 	}
 	virtual void f_scan(t_collector& a_collector);
 	t_symbol* f_symbol(std::wstring_view a_name);
-	size_t f_expand(size_t a_arguments);
 	void f_run(t_code* a_code, t_object* a_arguments);
 	t_pair* f_parse(const std::filesystem::path& a_path);
 	void f_run(t_holder<t_module>* a_module, const gc::t_pointer<t_pair>& a_expressions);
