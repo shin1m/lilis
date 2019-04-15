@@ -246,30 +246,6 @@ struct t_location : std::enable_shared_from_this<t_location>
 	}
 };
 
-struct t_parsed_pair : t_object_of<t_parsed_pair, t_pair>
-{
-	std::filesystem::path v_path;
-	t_at v_where_head;
-	t_at v_where_tail;
-
-	t_parsed_pair(t_object* a_head, const std::filesystem::path& a_path, const t_at& a_where_head) : t_object_of<t_parsed_pair, t_pair>(a_head, nullptr), v_path(a_path), v_where_head(a_where_head)
-	{
-	}
-};
-
-struct t_at_file : t_location
-{
-	std::filesystem::path v_path;
-	t_at v_at;
-
-	t_at_file(const std::filesystem::path& a_path, const t_at& a_at) : v_path(a_path), v_at(a_at)
-	{
-	}
-	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair);
-	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair);
-	virtual void f_print() const;
-};
-
 struct t_at_expression : t_location, gc::t_root
 {
 	t_engine& v_engine;

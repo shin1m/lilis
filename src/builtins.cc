@@ -308,6 +308,37 @@ struct : t_static
 
 struct : t_static
 {
+	struct t_at_string : t_location
+	{
+		std::wstring v_source;
+		t_at v_at;
+
+		t_at_string(const std::wstring& a_source, const t_at& a_at) : v_source(a_source), v_at(a_at)
+		{
+		}
+		virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair)
+		{
+			auto p = dynamic_cast<t_parsed_pair<std::wstring>*>(a_pair);
+			return p ? std::make_shared<t_at_string>(p->v_source, p->v_where_head) : shared_from_this();
+		}
+		virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair)
+		{
+			auto p = dynamic_cast<t_parsed_pair<std::wstring>*>(a_pair);
+			return p ? std::make_shared<t_at_string>(p->v_source, p->v_where_tail) : shared_from_this();
+		}
+		virtual void f_print() const
+		{
+			decltype(v_source.begin()) i;
+			v_at.f_print("", [&](long a_position)
+			{
+				i = v_source.begin() + a_position;
+			}, [&]
+			{
+				return *i++;
+			});
+		}
+	};
+
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
 		if (a_arguments > 1) throw t_error("requires [EOF]");
@@ -322,26 +353,23 @@ struct : t_static
 		}
 		cs.push_back(WEOF);
 		try {
-			auto get = [i = cs.begin()]() mutable
+			auto parse = [&](auto&& a_get, auto&& a_pair, auto&& a_location)
+			{
+				return t_parser<decltype(a_get), decltype(a_pair), decltype(a_location)>(a_engine, std::move(a_get), std::move(a_pair), std::move(a_location)).f_expression();
+			};
+			a_engine.v_used[-1] = parse([i = cs.begin()]() mutable
 			{
 				return *i++;
-			};
-			a_engine.v_used[-1] = t_parser<decltype(get)>(a_engine, "", std::move(get)).f_expression();
+			}, [&](t_object* a_value, const t_at& a_at)
+			{
+				return a_engine.f_new<t_parsed_pair<std::wstring>>(a_engine.f_pointer(a_value), cs, a_at);
+			}, [&](const t_at& a_at)
+			{
+				return std::make_shared<t_at_string>(cs, a_at);
+			});
 		} catch (std::exception& e) {
 			std::wcerr << L"caught: " << e.what() << std::endl;
-			if (auto p = dynamic_cast<t_error*>(&e)) if (!p->v_backtrace.empty()) {
-				auto at = static_cast<t_at_file*>(p->v_backtrace.back().get())->v_at;
-				p->v_backtrace.pop_back();
-				p->f_dump();
-				decltype(cs.begin()) i;
-				at.f_print("", [&](long a_position)
-				{
-					i = cs.begin() + a_position;
-				}, [&]
-				{
-					return *i++;
-				});
-			}
+			if (auto p = dynamic_cast<t_error*>(&e)) p->f_dump();
 		}
 	}
 } v_read;

@@ -6,12 +6,13 @@
 namespace lilis
 {
 
-template<typename T_get>
+template<typename T_get, typename T_pair, typename T_location>
 struct t_parser
 {
 	t_engine& v_engine;
-	std::filesystem::path v_path;
 	T_get v_get;
+	T_pair v_pair;
+	T_location v_location;
 	long v_p = 0;
 	long v_position = 0;
 	size_t v_line = 1;
@@ -56,41 +57,41 @@ struct t_parser
 	void f_throw [[noreturn]] (const std::string& a_message) const
 	{
 		t_error error(a_message);
-		error.v_backtrace.push_back(std::make_shared<t_at_file>(v_path, v_at));
+		error.v_backtrace.push_back(v_location(v_at));
 		throw error;
 	}
 	t_object* f_expression();
-	t_parsed_pair* f_head()
+	auto f_head()
 	{
 		auto at = v_at;
-		return v_engine.f_new<t_parsed_pair>(v_engine.f_pointer(f_expression()), v_path, at);
+		return v_pair(f_expression(), at);
 	}
-	void f_push(gc::t_pointer<t_parsed_pair>& a_p)
+	void f_push(gc::t_pointer<std::remove_pointer_t<decltype(v_pair(nullptr, {}))>>& a_p)
 	{
 		auto at = a_p->v_where_tail = v_at;
-		auto p = v_engine.f_new<t_parsed_pair>(v_engine.f_pointer(f_expression()), v_path, at);
+		auto p = v_pair(f_expression(), at);
 		a_p->v_tail = p;
 		a_p = p;
 	}
 
-	t_parser(t_engine& a_engine, const std::filesystem::path& a_path, T_get&& a_get) : v_engine(a_engine), v_path(a_path), v_get(std::forward<T_get>(a_get))
+	t_parser(t_engine& a_engine, T_get&& a_get, T_pair&& a_pair, T_location&& a_location) : v_engine(a_engine), v_get(std::forward<T_get>(a_get)), v_pair(std::forward<T_pair>(a_pair)), v_location(std::forward<T_location>(a_location))
 	{
 		v_c = v_get();
 		f_skip();
 	}
-	t_parsed_pair* operator()()
+	decltype(v_pair(nullptr, {})) operator()()
 	{
 		if (v_c == WEOF) return nullptr;
 		auto list = v_engine.f_pointer(f_head());
 		auto last = v_engine.f_pointer(list.v_value);
 		while (v_c != WEOF) f_push(last);
 		last->v_where_tail = v_at;
-		return list;
+		return list.v_value;
 	}
 };
 
-template<typename T_get>
-t_object* t_parser<T_get>::f_expression()
+template<typename T_get, typename T_pair, typename T_location>
+t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 {
 	switch (v_c) {
 	case WEOF:
@@ -152,7 +153,7 @@ t_object* t_parser<T_get>::f_expression()
 	case L'(':
 		{
 			f_next();
-			auto list = v_engine.f_pointer<t_parsed_pair>(nullptr);
+			auto list = v_engine.f_pointer<std::remove_pointer_t<decltype(v_pair(nullptr, {}))>>(nullptr);
 			if (v_c != L')') {
 				list = f_head();
 				for (auto last = v_engine.f_pointer(list.v_value);;) {
@@ -262,11 +263,17 @@ t_object* t_parser<T_get>::f_expression()
 	}
 }
 
-template<typename T_get>
-t_parsed_pair* f_parse(t_engine& a_engine, const std::filesystem::path& a_path, T_get&& a_get)
+template<typename T>
+struct t_parsed_pair : t_object_of<t_parsed_pair<T>, t_pair>
 {
-	return t_parser<T_get>(a_engine, a_path, std::forward<T_get>(a_get))();
-}
+	T v_source;
+	t_at v_where_head;
+	t_at v_where_tail;
+
+	t_parsed_pair(t_object* a_head, const T& a_source, const t_at& a_where_head) : t_object_of<t_parsed_pair, t_pair>(a_head, nullptr), v_source(a_source), v_where_head(a_where_head)
+	{
+	}
+};
 
 }
 

@@ -187,13 +187,60 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 	}
 }
 
+namespace
+{
+
+struct t_at_file : t_location
+{
+	std::filesystem::path v_path;
+	t_at v_at;
+
+	t_at_file(const std::filesystem::path& a_path, const t_at& a_at) : v_path(a_path), v_at(a_at)
+	{
+	}
+	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair)
+	{
+		auto p = dynamic_cast<t_parsed_pair<std::filesystem::path>*>(a_pair);
+		return p ? std::make_shared<t_at_file>(p->v_source, p->v_where_head) : shared_from_this();
+	}
+	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair)
+	{
+		auto p = dynamic_cast<t_parsed_pair<std::filesystem::path>*>(a_pair);
+		return p ? std::make_shared<t_at_file>(p->v_source, p->v_where_tail) : shared_from_this();
+	}
+	virtual void f_print() const
+	{
+		std::wfilebuf fb;
+		fb.open(v_path, std::ios_base::in);
+		v_at.f_print(v_path.c_str(), [&](long a_position)
+		{
+			fb.pubseekpos(a_position);
+		}, [&]
+		{
+			return fb.sbumpc();
+		});
+	}
+};
+
+}
+
 t_pair* t_engine::f_parse(const std::filesystem::path& a_path)
 {
 	std::wfilebuf fb;
 	if (!fb.open(a_path, std::ios_base::in)) throw t_error("unable to open");
-	return lilis::f_parse(*this, a_path, [&]
+	auto parse = [&](auto&& a_get, auto&& a_pair, auto&& a_location)
+	{
+		return t_parser<decltype(a_get), decltype(a_pair), decltype(a_location)>(*this, std::move(a_get), std::move(a_pair), std::move(a_location))();
+	};
+	return parse([&]
 	{
 		return fb.sbumpc();
+	}, [&](t_object* a_value, const t_at& a_at)
+	{
+		return f_new<t_parsed_pair<std::filesystem::path>>(f_pointer(a_value), a_path, a_at);
+	}, [&](const t_at& a_at)
+	{
+		return std::make_shared<t_at_file>(a_path, a_at);
 	});
 }
 

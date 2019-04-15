@@ -170,31 +170,6 @@ std::shared_ptr<t_location> t_code::f_location(void** a_address) const
 	return i == v_locations.end() ? nullptr : i->v_location;
 }
 
-std::shared_ptr<t_location> t_at_file::f_at_head(t_pair* a_pair)
-{
-	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
-	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_head) : shared_from_this();
-}
-
-std::shared_ptr<t_location> t_at_file::f_at_tail(t_pair* a_pair)
-{
-	auto p = dynamic_cast<t_parsed_pair*>(a_pair);
-	return p ? std::make_shared<t_at_file>(p->v_path, p->v_where_tail) : shared_from_this();
-}
-
-void t_at_file::f_print() const
-{
-	std::wfilebuf fb;
-	fb.open(v_path, std::ios_base::in);
-	v_at.f_print(v_path.c_str(), [&](long a_position)
-	{
-		fb.pubseekpos(a_position);
-	}, [&]
-	{
-		return fb.sbumpc();
-	});
-}
-
 void t_at_expression::f_scan(gc::t_collector& a_collector)
 {
 	v_expression = a_collector.f_forward(v_expression);
