@@ -15,6 +15,7 @@ scripts = \
 	macro-rest.lisp \
 	macro-test.lisp \
 	gensym.lisp \
+	eval.lisp \
 	boolean-test.lisp \
 	peano-test.lisp \
 	fibonacci.lisp \
@@ -25,6 +26,7 @@ scripts = \
 	shiftreset-tail.lisp \
 	callcc-test.lisp \
 	callcc-generate.lisp \
+	catch.lispo \
 	compile-error-cast.lispo \
 	compile-error-nil.lispo \
 	compile-error-symbol.lispo \
@@ -41,6 +43,7 @@ EXTRA_DIST = $(scripts) \
 	shiftreset.lisp \
 	callcc.lisp \
 	run-lispo \
+	catch.lispoe \
 	compile-error-cast.lispoe \
 	compile-error-nil.lispoe \
 	compile-error-symbol.lispoe \

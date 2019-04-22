@@ -8,12 +8,23 @@
 namespace lilis
 {
 
-struct t_error : std::runtime_error
+struct t_error
 {
-	std::list<std::shared_ptr<t_location>> v_backtrace;
+	struct t_holder : t_object_of<t_holder>
+	{
+		t_error* v_value;
 
-	using std::runtime_error::runtime_error;
-	void f_dump() const;
+		t_holder(t_error&& a_value) : v_value(new t_error(std::move(a_value)))
+		{
+		}
+		virtual void f_destruct(gc::t_collector& a_collector);
+		virtual void f_dump(const t_dump& a_dump) const;
+	};
+
+	std::wstring v_message;
+	std::vector<std::shared_ptr<t_location>> v_backtrace;
+
+	void f_dump(const t_dump& a_dump) const;
 };
 
 struct t_bindings : std::map<t_symbol*, t_object*>
@@ -145,27 +156,32 @@ struct t_code
 	std::shared_ptr<t_location> f_location(void** a_address) const;
 	void f_call(bool a_rest, t_scope* a_outer, size_t a_arguments)
 	{
-		if (a_rest) {
-			if (a_arguments < v_arguments) throw t_error("too few arguments");
-		} else {
-			if (a_arguments != v_arguments) throw t_error("wrong number of arguments");
-		}
-		auto scope = v_engine.f_pointer(a_outer);
-		auto p = v_engine.f_allocate(sizeof(t_scope) + sizeof(t_object) * v_locals.size());
 		auto used = v_engine.v_used - a_arguments;
-		scope = new(p) t_scope(scope, v_locals.size(), used, v_arguments);
-		if (a_rest) {
-			auto tail = v_engine.f_pointer(scope->f_locals()[v_arguments]);
-			for (auto p = used + v_arguments; v_engine.v_used != p; --v_engine.v_used)
-				tail = scope->f_locals()[v_arguments] = v_engine.f_new<t_pair>(v_engine.v_used[-1], tail);
+		try {
+			if (a_rest) {
+				if (a_arguments < v_arguments) throw t_error{L"too few arguments"s};
+			} else {
+				if (a_arguments != v_arguments) throw t_error{L"wrong number of arguments"s};
+			}
+			auto scope = v_engine.f_pointer(a_outer);
+			auto p = v_engine.f_allocate(sizeof(t_scope) + sizeof(t_object) * v_locals.size());
+			scope = new(p) t_scope(scope, v_locals.size(), used, v_arguments);
+			if (a_rest) {
+				auto tail = v_engine.f_pointer(scope->f_locals()[v_arguments]);
+				for (auto p = used + v_arguments; v_engine.v_used != p; --v_engine.v_used)
+					tail = scope->f_locals()[v_arguments] = v_engine.f_new<t_pair>(v_engine.v_used[-1], tail);
+			}
+			v_engine.v_used = used--;
+			if (used + v_stack > v_engine.v_stack.get() + t_engine::V_STACK || v_engine.v_frame <= v_engine.v_frames.get()) throw t_error{L"stack overflow"s};
+			--v_engine.v_frame;
+			v_engine.v_frame->v_stack = used;
+			v_engine.v_frame->v_code = v_this;
+			v_engine.v_frame->v_current = v_instructions.data();
+			v_engine.v_frame->v_scope = scope;
+		} catch (...) {
+			v_engine.v_used = used - 1;
+			throw;
 		}
-		v_engine.v_used = used--;
-		if (used + v_stack > v_engine.v_stack.get() + t_engine::V_STACK || v_engine.v_frame <= v_engine.v_frames.get()) throw t_error("stack overflow");
-		--v_engine.v_frame;
-		v_engine.v_frame->v_stack = used;
-		v_engine.v_frame->v_code = v_this;
-		v_engine.v_frame->v_current = v_instructions.data();
-		v_engine.v_frame->v_scope = scope;
 	}
 };
 
@@ -176,22 +192,22 @@ struct t_at
 	size_t v_column;
 
 	template<typename T_seek, typename T_get>
-	void f_print(const char* a_path, T_seek a_seek, T_get a_get) const
+	void f_dump(const t_dump& a_dump, T_seek a_seek, T_get a_get) const
 	{
+		a_dump << std::to_wstring(v_line) << L":"sv << std::to_wstring(v_column) << L"\n\t"sv;
 		a_seek(v_position);
-		std::wcerr << L"at " << a_path << L':' << v_line << L':' << v_column << std::endl << L'\t';
 		while (true) {
 			wint_t c = a_get();
 			if (c == WEOF || c == L'\n') break;
-			std::wcerr << wchar_t(c);
+			a_dump << wchar_t(c);
 		}
 		a_seek(v_position);
-		std::wcerr << std::endl << L'\t';
+		a_dump << L"\n\t"sv;
 		for (size_t i = 1; i < v_column; ++i) {
 			wint_t c = a_get();
-			std::wcerr << (std::iswspace(c) ? wchar_t(c) : L' ');
+			a_dump << (std::iswspace(c) ? wchar_t(c) : L' ');
 		}
-		std::wcerr << L'^' << std::endl;
+		a_dump << L"^\n"sv;
 	}
 };
 
@@ -199,7 +215,7 @@ template<typename T, typename U>
 inline T* f_cast(U* a_p)
 {
 	auto p = dynamic_cast<T*>(a_p);
-	if (!p) throw t_error("must be "s + typeid(T).name());
+	if (!p) throw t_error{L"must be "s + std::filesystem::path(typeid(T).name()).wstring()};
 	return p;
 }
 
@@ -208,7 +224,7 @@ struct t_location : std::enable_shared_from_this<t_location>
 	virtual ~t_location() = default;
 	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair) = 0;
 	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair) = 0;
-	virtual void f_print() const = 0;
+	virtual void f_dump(const t_dump& a_dump) const = 0;
 	template<typename T>
 	auto f_try(T&& a_do)
 	{
@@ -241,7 +257,7 @@ struct t_location : std::enable_shared_from_this<t_location>
 	{
 		f_at_tail(a_p)->f_try([&]
 		{
-			if (a_p->v_tail) throw t_error("must be nil");
+			if (a_p->v_tail) throw t_error{L"must be nil"s};
 		});
 	}
 };
@@ -257,23 +273,19 @@ struct t_at_expression : t_location, gc::t_root
 	virtual void f_scan(gc::t_collector& a_collector);
 	virtual std::shared_ptr<t_location> f_at_head(t_pair* a_pair);
 	virtual std::shared_ptr<t_location> f_at_tail(t_pair* a_pair);
-	virtual void f_print() const;
+	virtual void f_dump(const t_dump& a_dump) const;
 };
 
 inline std::wostream& operator<<(std::wostream& a_out, t_object* a_value)
 {
-	f_dump(a_value, {
-		[&](auto x)
-		{
-			a_out << x;
-		},
-		[&](auto)
-		{
-		},
-		[&](auto)
-		{
-		}
-	});
+	t_dump{[&](auto x)
+	{
+		a_out << x;
+	}, [&](auto)
+	{
+	}, [&](auto)
+	{
+	}} << a_value;
 	return a_out;
 }
 

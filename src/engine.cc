@@ -20,6 +20,9 @@ t_symbol* t_engine::f_symbol(std::wstring_view a_name)
 	return i->second = f_new<t_symbol>(i);
 }
 
+void f_rethrow(t_engine& a_engine, t_object* a_thunk);
+void f_throw(t_engine& a_engine, t_error&& a_error);
+
 void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 {
 	struct t_lambda : t_object_of<t_lambda>
@@ -58,7 +61,7 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 				last = pair->v_tail;
 				++a_arguments;
 				if (!last) break;
-				if (v_used >= v_stack.get() + V_STACK) throw t_error("stack overflow");
+				if (v_used >= v_stack.get() + V_STACK) throw t_error{L"stack overflow"s};
 			}
 		return a_arguments;
 	};
@@ -67,7 +70,7 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 		auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
 		++v_frame->v_current;
 		auto callee = v_used[-1 - arguments];
-		if (!callee) throw t_error("calling nil");
+		if (!callee) throw t_error{L"calling nil"s};
 		callee->f_call(*this, a_expand ? expand(arguments) : arguments);
 	};
 	auto tail = [&](bool a_expand)
@@ -75,34 +78,37 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 		auto arguments = reinterpret_cast<size_t>(*++v_frame->v_current);
 		v_used = std::copy(v_used - arguments - 1, v_used, v_frame->v_stack);
 		auto callee = *v_frame++->v_stack;
-		if (!callee) throw t_error("calling nil");
+		if (!callee) throw t_error{L"calling nil"s};
 		callee->f_call(*this, a_expand ? expand(arguments) : arguments);
 	};
-	auto used = v_used;
-	auto frame = v_frame;
-	try {
-		auto end = reinterpret_cast<void*>(e_instruction__END);
-		{
-			auto top = --v_frame;
-			top->v_code = nullptr;
-			top->v_current = &end;
-			top->v_scope = nullptr;
-			top->v_stack = v_used;
+	auto end = reinterpret_cast<void*>(e_instruction__END);
+	{
+		auto top = --v_frame;
+		top->v_code = nullptr;
+		top->v_current = &end;
+		top->v_scope = nullptr;
+		top->v_stack = v_used;
+	}
+	{
+		auto arguments = f_pointer(a_arguments);
+		auto code = f_pointer(f_new<t_holder<t_code>>(*this, nullptr, nullptr));
+		t_emit emit{*code};
+		size_t stack = 0;
+		emit(a_code->v_rest ? e_instruction__LAMBDA_WITH_REST : e_instruction__LAMBDA, ++stack)(a_code->v_this);
+		while (auto p = dynamic_cast<t_pair*>(arguments.v_value)) {
+			emit(e_instruction__PUSH, ++stack)(p->v_head);
+			arguments = p->v_tail;
 		}
-		*v_used++ = nullptr;
-		{
-			auto used = v_used;
-			while (auto p = dynamic_cast<t_pair*>(a_arguments)) {
-				*v_used++ = p->v_head;
-				a_arguments = p->v_tail;
-			}
-			if (a_arguments) {
-				*v_used++ = a_arguments;
-				expand(v_used - used);
-			}
-			a_code->f_call(a_code->v_rest, nullptr, v_used - used);
+		auto instruction = e_instruction__CALL_TAIL;
+		if (arguments) {
+			emit(e_instruction__PUSH, ++stack)(arguments);
+			instruction = e_instruction__CALL_TAIL_WITH_EXPANSION;
 		}
-		while (true) {
+		emit(instruction, 1)(stack - 1);
+		f_rethrow(*this, f_new<t_lambda>(code, nullptr));
+	}
+	while (true) {
+		try {
 			switch (static_cast<t_instruction>(reinterpret_cast<intptr_t>(*v_frame->v_current))) {
 			case e_instruction__POP:
 				++v_frame->v_current;
@@ -172,18 +178,11 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 				++v_frame;
 				return;
 			}
+		} catch (t_error& e) {
+			f_throw(*this, std::move(e));
+		} catch (std::exception& e) {
+			f_throw(*this, t_error{std::filesystem::path(e.what()).wstring()});
 		}
-	} catch (std::exception& e) {
-		v_used = used;
-		auto rethrow = [&](t_error& a_e)
-		{
-			for (--frame; v_frame < frame; ++v_frame) a_e.v_backtrace.push_back((*v_frame->v_code)->f_location(v_frame->v_current));
-			++v_frame;
-			throw a_e;
-		};
-		if (auto p = dynamic_cast<t_error*>(&e)) rethrow(*p);
-		t_error error(e.what());
-		rethrow(error);
 	}
 }
 
@@ -208,11 +207,12 @@ struct t_at_file : t_location
 		auto p = dynamic_cast<t_parsed_pair<std::filesystem::path>*>(a_pair);
 		return p ? std::make_shared<t_at_file>(p->v_source, p->v_where_tail) : shared_from_this();
 	}
-	virtual void f_print() const
+	virtual void f_dump(const t_dump& a_dump) const
 	{
+		a_dump << L"at "sv << v_path.wstring() << L":"sv;
 		std::wfilebuf fb;
 		fb.open(v_path, std::ios_base::in);
-		v_at.f_print(v_path.c_str(), [&](long a_position)
+		v_at.f_dump(a_dump, [&](long a_position)
 		{
 			fb.pubseekpos(a_position);
 		}, [&]
@@ -227,7 +227,7 @@ struct t_at_file : t_location
 t_pair* t_engine::f_parse(const std::filesystem::path& a_path)
 {
 	std::wfilebuf fb;
-	if (!fb.open(a_path, std::ios_base::in)) throw t_error("unable to open");
+	if (!fb.open(a_path, std::ios_base::in)) throw t_error{L"unable to open"s};
 	auto parse = [&](auto&& a_get, auto&& a_pair, auto&& a_location)
 	{
 		return t_parser<decltype(a_get), decltype(a_pair), decltype(a_location)>(*this, std::move(a_get), std::move(a_pair), std::move(a_location))();

@@ -1,0 +1,8 @@
+(call-with-prompt catch (lambda (k e)
+  (print 'caught (catch k e))
+) (lambda ()
+  (define f (lambda ()
+    (abort-to-prompt catch (error 'NG))
+  ))
+  (print (f))
+))

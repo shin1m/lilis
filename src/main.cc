@@ -35,9 +35,19 @@ int main(int argc, char* argv[])
 			f_define_builtins(**engine.v_global);
 			engine.f_run(engine.f_new<t_holder<t_module>>(engine, path), expressions);
 		}
+	} catch (t_error& e) {
+		std::wcerr << L"caught: ";
+		e.f_dump({[&](auto x)
+		{
+			std::wcerr << x;
+		}, [&](auto)
+		{
+		}, [&](auto)
+		{
+		}});
+		return -1;
 	} catch (std::exception& e) {
 		std::wcerr << L"caught: " << e.what() << std::endl;
-		if (auto p = dynamic_cast<t_error*>(&e)) p->f_dump();
 		return -1;
 	}
 	return 0;

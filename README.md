@@ -65,78 +65,110 @@ Loads a module named SYMBOL.lisp and imports all exported symbols from the modul
 If CONDITION evaluates to other than `()`, evaluates THEN and the result of it is the result of this form.
 Otherwise, evaluates ELSE and the result of it is the result of this form.
 
-### (eq? EXPRESSION EXPRESSION)
+### (eq? x y)
 
-Evaluates the left EXPRESSION and the right EXPRESSION in order.
-If the both results are identical, a value other than `()` is the result of this form.
-Otherwise, `()` is the result of this form.
+    x: OBJECT
+    y: OBJECT
 
-### (pair? EXPRESSION)
+If `x` and `y` are identical, returns a value other than `()`.
+Otherwise, returns `()`.
 
-Evaluates EXPRESSION.
-If the result is a pair object, a value other than `()` is the result of this form.
-Otherwise, `()` is the result of this form.
+### (pair? x)
 
-### (cons EXPRESSION EXPRESSION)
+    x: OBJECT
 
-Evaluates the left EXPRESSION and the right EXPRESSION in order.
-Instantiates a new pair object.
+If `x` is a PAIR object, returns a value other than `()`.
+Otherwise, returns `()`.
 
-### (car EXPRESSION)
+### (cons head tail)
 
-Evaluates EXPRESSION.
-The car part of the result is the result of this form.
+    head: OBJECT
+    tail: OBJECT
 
-### (cdr EXPRESSION)
+Instantiates a new PAIR object with car part `head` and cdr part `tail`.
 
-Evaluates EXPRESSION.
-The cdr part of the result is the result of this form.
+### (car x)
+
+    x: PAIR
+
+Returns the car part of `x`.
+
+### (cdr x)
+
+    x: PAIR
+
+Returns the cdr part of `x`.
 
 ### (gensym)
 
-Evaluates to a unique symbol object.
+Instantiates a new unique SYMBOL object.
 
 ### (module)
 
-Instantiates an anonymous module.
+Instantiates a new anonymous MODULE object.
 
-### (read [EOF])
+### (read [eof])
 
-    EOF: EXPRESSION
+    eof: OBJECT
 
 Reads an S-expression from the standard input stream.
-When end of file is reached before an expression, evaluates to EOF if given or `()`.
-Otherwise, an expression read from the stream is the result of this form.
+When end of file is reached before an expression, returns `eof` if given or `()`.
+Otherwise, returns an expression read from the stream.
 
-### (eval EXPRESSION MODULE)
+### (eval expression module)
 
-    MODULE: EXPRESSION
+    expression: OBJECT
+    module: MODULE
 
-Evaluates EXPRESSION with MODULE.
-MODULE is a module instantiated by (module).
+Evaluates `expression` with `module`.
+`module` is a MODULE object instantiated by `(module)`.
+Returns the result of evaluation.
 
-### (print EXPRESSIONS)
+### (print values...)
 
-Evaluates EXPRESSIONS in order and prints the results in one line.
-`()` is the result of this form.
+    values: list of OBJECT
 
-### (call-with-prompt TAG HANDLER THUNK)
+Prints `values` in one line.
+Returns `()`.
 
-    TAG: EXPRESSION
-    HANDLER: (_ CONTINUATION EXPRESSIONS)
-    THUNK: (_)
+### (call-with-prompt tag handler thunk)
 
-Sets up a new prompt tagged with TAG and calls THUNK.
-When (abort-to-prompt TAG EXPRESSIONS) is evaluated during the execution of THUNK, it calls (HANDLER CONTINUATION EXPRESSIONS).
-CONTINUATION is a continuation object.
-(CONTINUATION EXPRESSION) resumes the execution of THUNK at the point where (abort-to-prompt TAG EXPRESSIONS) is evaluated passing EXPRESSION as the result.
-If HANDLER is called, the result of it is the result of this form.
-If the execution of THUNK reaches the end, the result of it is the result of this form.
+    tag: OBJECT
+    handler: (_ continuation values...)
+        continuation: CONTINUATION
+        values: list of OBJECT
+    thunk: (_)
 
-### (abort-to-prompt TAG EXPRESSIONS)
+Sets up a new prompt tagged with `tag` and calls `thunk`.
+When `(abort-to-prompt tag values...)` is evaluated during the execution of `thunk`, it calls `(handler continuation values...)`.
+`continuation` is a CONTINUATION object.
+`(continuation value)` resumes the execution of `thunk` at the point where `(abort-to-prompt tag values...)` is evaluated passing `value` as the result.
+If `handler` reaches the end, returns the result of it.
+If the execution of `thunk` reaches the end, returns the result of it.
 
-Instantiates a new continuation object CONTINUATION delimited by the closest prompt tagged with TAG and calls (HANDLER CONTINUATION EXPRESSIONS).
-EXPRESSION of (CONTINUATION EXPRESSION) is the result of this form.
+### (abort-to-prompt tag values...)
+
+    tag: OBJECT
+    values: list of OBJECT
+
+Instantiates a new CONTINUATION object `continuation` delimited by the closest prompt tagged with `tag` and calls `(handler continuation values)`.
+Returns `value` of `(continuation value)`.
+
+### (error message)
+
+    message: OBJECT
+
+Instantiates a new ERROR object with a message `message`.
+
+### (catch continuation error)
+
+    continuation: CONTINUATION
+    error: ERROR
+
+Extracts call stack of `continuation` and append them to `error` as backtrace.
+`catch` is also used as the tag for system errors.
+So system errors can be handled by `(call-with-prompt catch ...)`.
+Returns `error`.
 
 
 ## How to Build

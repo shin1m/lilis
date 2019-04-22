@@ -1,9 +1,10 @@
 (define loop (lambda (module eof)
-  (define x (read eof))
-  (if (eq? x eof) () (begin
-    (print (eval x module))
-    (loop module eof)
-  ))
+  (if (eq? (call-with-prompt catch (lambda (k e)
+    (print (catch k e))
+  ) (lambda ()
+    (define x (read eof))
+    (if (eq? x eof) x (print (eval x module)))
+  )) eof) () (loop module eof))
 ))
 (define top (module))
 (eval '(begin

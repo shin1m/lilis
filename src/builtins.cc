@@ -96,7 +96,7 @@ struct : t_static
 		auto bound = engine.f_pointer(a_code.f_render(arguments->v_head, location));
 		location->f_try([&]
 		{
-			if (!dynamic_cast<t_mutable*>(bound.v_value)) throw t_error("not mutable");
+			if (!dynamic_cast<t_mutable*>(bound.v_value)) throw t_error{L"not mutable"s};
 		});
 		arguments = a_location->f_cast_tail<t_pair>(arguments);
 		auto value = a_code.f_render(arguments->v_head, a_location->f_at_head(arguments));
@@ -220,13 +220,28 @@ struct : t_static
 	}
 } v_if;
 
+template<typename T>
+inline void f_try(t_engine& a_engine, size_t a_arguments, T a_do)
+{
+	auto used = a_engine.v_used - a_arguments;
+	try {
+		a_do(used);
+		a_engine.v_used = used;
+	} catch (...) {
+		a_engine.v_used = used - 1;
+		throw;
+	}
+}
+
 struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw t_error("requires OBJECT OBJECT");
-		a_engine.v_used -= 2;
-		a_engine.v_used[-1] = a_engine.v_used[0] == a_engine.v_used[1] ? this : nullptr;
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 2) throw t_error{L"requires OBJECT OBJECT"s};
+			a_xs[-1] = a_xs[0] == a_xs[1] ? this : nullptr;
+		});
 	}
 } v_eq;
 
@@ -234,9 +249,11 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw t_error("requires OBJECT");
-		--a_engine.v_used;
-		a_engine.v_used[-1] = dynamic_cast<t_pair*>(a_engine.v_used[0]);
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 1) throw t_error{L"requires OBJECT"s};
+			a_xs[-1] = dynamic_cast<t_pair*>(a_xs[0]);
+		});
 	}
 } v_is_pair;
 
@@ -244,10 +261,11 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw t_error("requires OBJECT OBJECT");
-		auto used = a_engine.v_used - 2;
-		used[-1] = a_engine.f_new<t_pair>(used[0], used[1]);
-		a_engine.v_used = used;
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 2) throw t_error{L"requires OBJECT OBJECT"s};
+			a_xs[-1] = a_engine.f_new<t_pair>(a_xs[0], a_xs[1]);
+		});
 	}
 } v_cons;
 
@@ -255,9 +273,11 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw t_error("requires PAIR");
-		--a_engine.v_used;
-		a_engine.v_used[-1] = f_cast<t_pair>(a_engine.v_used[0])->v_head;
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 1) throw t_error{L"requires PAIR"s};
+			a_xs[-1] = f_cast<t_pair>(a_xs[0])->v_head;
+		});
 	}
 } v_car;
 
@@ -265,9 +285,11 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw t_error("requires PAIR");
-		--a_engine.v_used;
-		a_engine.v_used[-1] = f_cast<t_pair>(a_engine.v_used[0])->v_tail;
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 1) throw t_error{L"requires PAIR"s};
+			a_xs[-1] = f_cast<t_pair>(a_xs[0])->v_tail;
+		});
 	}
 } v_cdr;
 
@@ -292,8 +314,11 @@ struct : t_static
 
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments > 0) throw t_error("requires no arguments");
-		a_engine.v_used[-1] = a_engine.f_new<t_instance>();
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments > 0) throw t_error{L"requires no arguments"s};
+			a_xs[-1] = a_engine.f_new<t_instance>();
+		});
 	}
 } v_gensym;
 
@@ -301,8 +326,11 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments > 0) throw t_error("requires no arguments");
-		a_engine.v_used[-1] = a_engine.f_new<t_holder<t_module>>(a_engine, ""sv);
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments > 0) throw t_error{L"requires no arguments"s};
+			a_xs[-1] = a_engine.f_new<t_holder<t_module>>(a_engine, ""sv);
+		});
 	}
 } v_module;
 
@@ -326,10 +354,11 @@ struct : t_static
 			auto p = dynamic_cast<t_parsed_pair<std::wstring>*>(a_pair);
 			return p ? std::make_shared<t_at_string>(p->v_source, p->v_where_tail) : shared_from_this();
 		}
-		virtual void f_print() const
+		virtual void f_dump(const t_dump& a_dump) const
 		{
+			a_dump << L"at "sv;
 			decltype(v_source.begin()) i;
-			v_at.f_print("", [&](long a_position)
+			v_at.f_dump(a_dump, [&](long a_position)
 			{
 				i = v_source.begin() + a_position;
 			}, [&]
@@ -341,23 +370,22 @@ struct : t_static
 
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments > 1) throw t_error("requires [EOF]");
-		a_engine.v_used -= a_arguments;
-		a_engine.v_used[-1] = nullptr;
-		std::wcout << L"> ";
-		std::wstring cs;
-		std::getline(std::wcin, cs);
-		if (cs.empty()) {
-			if (!std::wcin && a_arguments > 0) a_engine.v_used[-1] = a_engine.v_used[0];
-			return;
-		}
-		cs.push_back(WEOF);
-		try {
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments > 1) throw t_error{L"requires [EOF]"s};
+			std::wcout << L"> ";
+			std::wstring cs;
+			std::getline(std::wcin, cs);
+			if (cs.empty()) {
+				a_xs[-1] = !std::wcin && a_arguments > 0 ? a_xs[0] : nullptr;
+				return;
+			}
+			cs.push_back(WEOF);
 			auto parse = [&](auto&& a_get, auto&& a_pair, auto&& a_location)
 			{
 				return t_parser<decltype(a_get), decltype(a_pair), decltype(a_location)>(a_engine, std::move(a_get), std::move(a_pair), std::move(a_location)).f_expression();
 			};
-			a_engine.v_used[-1] = parse([i = cs.begin()]() mutable
+			a_xs[-1] = parse([i = cs.begin()]() mutable
 			{
 				return *i++;
 			}, [&](t_object* a_value, const t_at& a_at)
@@ -367,10 +395,7 @@ struct : t_static
 			{
 				return std::make_shared<t_at_string>(cs, a_at);
 			});
-		} catch (std::exception& e) {
-			std::wcerr << L"caught: " << e.what() << std::endl;
-			if (auto p = dynamic_cast<t_error*>(&e)) p->f_dump();
-		}
+		});
 	}
 } v_read;
 
@@ -378,27 +403,25 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw t_error("requires OBJECT MODULE");
-		a_engine.v_used -= 2;
-		a_engine.v_used[-1] = nullptr;
-		if (!a_engine.v_used[0]) return;
-		auto expression = a_engine.f_pointer(a_engine.v_used[0]);
-		auto module = a_engine.f_pointer(f_cast<t_holder<t_module>>(a_engine.v_used[1]));
-		try {
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 2) throw t_error{L"requires OBJECT MODULE"s};
+			if (!a_xs[0]) {
+				a_xs[-1] = nullptr;
+				return;
+			}
+			auto module = a_engine.f_pointer(f_cast<t_holder<t_module>>(a_xs[1]));
 			auto code = a_engine.f_pointer(a_engine.f_new<t_holder<t_code>>(a_engine, nullptr, module));
 			(*code)->v_imports.push_back(a_engine.v_global);
 			(*code)->v_imports.push_back(module);
 			{
 				t_emit emit{*code};
-				expression->f_render(**code, std::make_shared<t_at_expression>(a_engine, expression))->f_emit(emit, 0, true);
+				a_xs[0]->f_render(**code, std::make_shared<t_at_expression>(a_engine, a_xs[0]))->f_emit(emit, 0, true);
 				emit.f_end();
 			}
 			a_engine.f_run(*code, nullptr);
-			a_engine.v_used[-1] = a_engine.v_used[0];
-		} catch (std::exception& e) {
-			std::wcerr << L"caught: " << e.what() << std::endl;
-			if (auto p = dynamic_cast<t_error*>(&e)) p->f_dump();
-		}
+			a_xs[-1] = a_engine.v_used[0];
+		});
 	}
 } v_eval;
 
@@ -445,8 +468,10 @@ namespace prompt
 		}
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			if (a_arguments != 1) throw t_error("requires OBJECT");
-			auto used = a_engine.v_used - 2;
+			a_engine.v_used -= a_arguments + 1;
+			if (a_arguments != 1) throw t_error{L"requires OBJECT"s};
+			auto used = a_engine.v_used;
+			if (used + v_stack > a_engine.v_stack.get() + t_engine::V_STACK || a_engine.v_frame - v_frames < a_engine.v_frames.get()) throw t_error{L"stack overflow"s};
 			auto value = used[1];
 			auto p = reinterpret_cast<t_object**>(this + 1);
 			a_engine.v_used = std::copy_n(p, v_stack, used);
@@ -462,8 +487,14 @@ namespace prompt
 
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			if (a_arguments != 3) throw t_error("requires TAG HANDLER THUNK");
-			if (a_engine.v_frame <= a_engine.v_frames.get()) throw t_error("stack overflow");
+			if (a_arguments != 3) {
+				a_engine.v_used -= a_arguments + 1;
+				throw t_error{L"requires TAG HANDLER THUNK"s};
+			}
+			if (a_engine.v_frame <= a_engine.v_frames.get()) {
+				a_engine.v_used -= 4;
+				throw t_error{L"stack overflow"s};
+			}
 			--a_engine.v_frame;
 			a_engine.v_frame->v_stack = a_engine.v_used - 4;
 			a_engine.v_frame->v_code = nullptr;
@@ -476,21 +507,26 @@ namespace prompt
 	{
 		virtual void f_call(t_engine& a_engine, size_t a_arguments)
 		{
-			if (a_arguments < 1) throw t_error("requires TAG [OBJECT...]");
 			auto tail = a_engine.v_used - a_arguments - 1;
-			auto frame = a_engine.v_frame;
-			while (!dynamic_cast<t_call*>(frame->v_stack[0]) || frame->v_stack[1] != tail[1])
-				if (++frame == a_engine.v_frames.get() + t_engine::V_FRAMES)
-					throw t_error("no matching prompt found");
-			auto head = frame->v_stack;
-			auto stack = tail - head;
-			auto frames = ++frame - a_engine.v_frame;
-			head[1] = new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_frame) * frames)) t_continuation(a_engine.v_frame, stack, frames);
-			head[0] = this;
-			auto handler = head[2];
-			a_engine.v_used = std::copy(tail + 2, a_engine.v_used, head + 2);
-			a_engine.v_frame = frame;
-			handler->f_call(a_engine, a_arguments);
+			try {
+				if (a_arguments < 1) throw t_error{L"requires TAG [OBJECT...]"s};
+				auto frame = a_engine.v_frame;
+				while (!dynamic_cast<t_call*>(frame->v_stack[0]) || frame->v_stack[1] != tail[1])
+					if (++frame == a_engine.v_frames.get() + t_engine::V_FRAMES)
+						throw t_error{L"no matching prompt found"s};
+				auto head = frame->v_stack;
+				auto stack = tail - head;
+				auto frames = ++frame - a_engine.v_frame;
+				head[1] = new(a_engine.f_allocate(sizeof(t_continuation) + sizeof(t_object*) * stack + sizeof(t_frame) * frames)) t_continuation(a_engine.v_frame, stack, frames);
+				head[0] = this;
+				auto handler = head[2];
+				a_engine.v_used = std::copy(tail + 2, a_engine.v_used, head + 2);
+				a_engine.v_frame = frame;
+				handler->f_call(a_engine, a_arguments);
+			} catch (...) {
+				a_engine.v_used = tail;
+				throw;
+			}
 		}
 	} v_abort;
 }
@@ -514,10 +550,11 @@ struct : t_static
 
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 2) throw t_error("requires PAIR OBJECT");
-		auto used = a_engine.v_used - 2;
-		used[-1] = f_append(a_engine, used[0], used[1]);
-		a_engine.v_used = used;
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 2) throw t_error{L"requires PAIR OBJECT"s};
+			a_xs[-1] = f_append(a_engine, a_xs[0], a_xs[1]);
+		});
 	}
 } v_append;
 
@@ -525,11 +562,53 @@ struct : t_static
 {
 	virtual void f_call(t_engine& a_engine, size_t a_arguments)
 	{
-		if (a_arguments != 1) throw t_error("requires OBJECT");
-		a_engine.v_used[-2] = a_engine.f_new<t_quote>(a_engine.v_used[-1]);
-		--a_engine.v_used;
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 1) throw t_error{L"requires OBJECT"s};
+			a_xs[-1] = a_engine.f_new<t_quote>(a_xs[0]);
+		});
 	}
 } v_quote;
+
+struct : t_static
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 1) throw t_error{L"requires MESSAGE"s};
+			std::wstringstream out;
+			out << a_xs[0];
+			a_xs[-1] = a_engine.f_new<t_error::t_holder>(t_error{out.str()});
+		});
+	}
+} v_error;
+
+struct : t_static
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		f_try(a_engine, a_arguments, [&](auto a_xs)
+		{
+			if (a_arguments != 2) throw t_error{L"requires CONTINUATION ERROR"s};
+			auto continuation = f_cast<prompt::t_continuation>(a_xs[0]);
+			auto& backtrace = f_cast<t_error::t_holder>(a_xs[1])->v_value->v_backtrace;
+			auto p = reinterpret_cast<t_frame*>(reinterpret_cast<char*>(continuation + 1) + sizeof(t_object*) * continuation->v_stack);
+			for (auto q = p + continuation->v_frames; p != q; ++p)
+				if (p->v_code) backtrace.push_back((*p->v_code)->f_location(p->v_current));
+			a_xs[-1] = a_xs[1];
+		});
+	}
+} v_catch;
+
+struct : t_static
+{
+	virtual void f_call(t_engine& a_engine, size_t a_arguments)
+	{
+		v_catch.f_call(a_engine, a_arguments);
+		throw std::move(*f_cast<t_error::t_holder>(a_engine.v_used[1])->v_value);
+	}
+} v_rethrow;
 
 }
 
@@ -556,6 +635,23 @@ t_object* f_unquasiquote(t_code& a_code, const std::shared_ptr<t_location>& a_lo
 	return engine.f_new<t_quote>(engine.f_pointer(a_value));
 }
 
+void f_rethrow(t_engine& a_engine, t_object* a_thunk)
+{
+	*a_engine.v_used++ = &prompt::v_call;
+	*a_engine.v_used++ = &v_catch;
+	*a_engine.v_used++ = &v_rethrow;
+	*a_engine.v_used++ = a_thunk;
+	prompt::v_call.f_call(a_engine, 3);
+}
+
+void f_throw(t_engine& a_engine, t_error&& a_error)
+{
+	*a_engine.v_used++ = &prompt::v_abort;
+	*a_engine.v_used++ = &v_catch;
+	*a_engine.v_used++ = a_engine.f_new<t_error::t_holder>(std::move(a_error));
+	prompt::v_abort.f_call(a_engine, 2);
+}
+
 void f_define_builtins(t_module& a_module)
 {
 	a_module.f_register(L"lambda"sv, &v_lambda);
@@ -578,6 +674,8 @@ void f_define_builtins(t_module& a_module)
 	a_module.f_register(L"print"sv, &v_print);
 	a_module.f_register(L"call-with-prompt"sv, &prompt::v_call);
 	a_module.f_register(L"abort-to-prompt"sv, &prompt::v_abort);
+	a_module.f_register(L"error"sv, &v_error);
+	a_module.f_register(L"catch"sv, &v_catch);
 }
 
 }

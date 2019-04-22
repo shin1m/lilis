@@ -54,9 +54,9 @@ struct t_parser
 		f_get();
 		f_skip();
 	}
-	void f_throw [[noreturn]] (const std::string& a_message) const
+	void f_throw [[noreturn]] (std::wstring&& a_message) const
 	{
-		t_error error(a_message);
+		t_error error{std::move(a_message)};
 		error.v_backtrace.push_back(v_location(v_at));
 		throw error;
 	}
@@ -95,7 +95,7 @@ t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 {
 	switch (v_c) {
 	case WEOF:
-		f_throw("unexpected end of file");
+		f_throw(L"unexpected end of file"s);
 	case L'"':
 		{
 			f_get();
@@ -138,7 +138,7 @@ t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 						cs.push_back(L'\v');
 						break;
 					default:
-						f_throw("lexical error");
+						f_throw(L"lexical error"s);
 					}
 				} else {
 					cs.push_back(v_c);
@@ -164,7 +164,7 @@ t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 						f_next();
 						last->v_where_tail = v_at;
 						last->v_tail = f_expression();
-						if (v_c != L')') f_throw("must be ')'");
+						if (v_c != L')') f_throw(L"must be ')'"s);
 						break;
 					}
 					f_push(last);
@@ -198,7 +198,7 @@ t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 				case L'x':
 					cs.push_back(v_c);
 					f_get();
-					if (!std::iswxdigit(v_c)) f_throw("lexical error");
+					if (!std::iswxdigit(v_c)) f_throw(L"lexical error"s);
 					do {
 						cs.push_back(v_c);
 						f_get();
@@ -209,7 +209,7 @@ t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 					return nullptr;
 				default:
 					while (std::iswdigit(v_c)) {
-						if (v_c >= L'8') f_throw("lexical error");
+						if (v_c >= L'8') f_throw(L"lexical error"s);
 						cs.push_back(v_c);
 						f_get();
 					}
@@ -235,7 +235,7 @@ t_object* t_parser<T_get, T_pair, T_location>::f_expression()
 						cs.push_back(v_c);
 						f_get();
 					}
-					if (!std::iswdigit(v_c)) f_throw("lexical error");
+					if (!std::iswdigit(v_c)) f_throw(L"lexical error"s);
 					do {
 						cs.push_back(v_c);
 						f_get();

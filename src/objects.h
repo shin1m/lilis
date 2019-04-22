@@ -22,6 +22,16 @@ struct t_dump
 	std::function<void(std::wstring_view)> v_put;
 	std::function<void(const t_pair*)> v_head;
 	std::function<void(const t_pair*)> v_tail;
+
+	const t_dump& operator<<(std::wstring_view a_x) const
+	{
+		v_put(a_x);
+		return *this;
+	}
+	const t_dump& operator<<(wchar_t a_x) const
+	{
+		return *this << std::wstring_view(&a_x, 1);
+	}
 };
 
 struct t_object : gc::t_object
@@ -115,12 +125,11 @@ struct t_quasiquote : t_with_value<t_object_of<t_quasiquote>, t_object>
 	virtual void f_dump(const t_dump& a_dump) const;
 };
 
-inline void f_dump(t_object* a_value, const t_dump& a_dump)
+inline const t_dump& operator<<(const t_dump& a_dump, t_object* a_value)
 {
-	if (a_value)
-		a_value->f_dump(a_dump);
-	else
-		a_dump.v_put(L"()"sv);
+	if (!a_value) return a_dump << L"()"sv;
+	a_value->f_dump(a_dump);
+	return a_dump;
 }
 
 inline void f_push(gc::t_collector& a_collector, gc::t_pointer<t_pair>& a_p, t_object* a_value)

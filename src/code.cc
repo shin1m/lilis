@@ -4,9 +4,20 @@
 namespace lilis
 {
 
-void t_error::f_dump() const
+void t_error::t_holder::f_destruct(gc::t_collector& a_collector)
 {
-	for (auto& x : v_backtrace) x->f_print();
+	delete v_value;
+}
+
+void t_error::t_holder::f_dump(const t_dump& a_dump) const
+{
+	v_value->f_dump(a_dump);
+}
+
+void t_error::f_dump(const t_dump& a_dump) const
+{
+	a_dump << v_message << L"\n"sv;
+	for (auto& x : v_backtrace) x->f_dump(a_dump);
 }
 
 namespace
@@ -76,8 +87,8 @@ size_t t_code::t_local::f_outer(t_code* a_code) const
 {
 	for (size_t i = 0;; a_code = *a_code->v_outer, ++i) {
 		if (a_code == *v_value) return i;
-		if (a_code->v_macro) throw t_error("not available at compile time");
-		if (!a_code->v_outer) throw t_error("out of scope");
+		if (a_code->v_macro) throw t_error{L"not available at compile time"s};
+		if (!a_code->v_outer) throw t_error{L"out of scope"s};
 	}
 }
 
@@ -120,7 +131,7 @@ t_object* t_code::f_resolve(t_symbol* a_symbol, const std::shared_ptr<t_location
 			if (auto p = code->v_bindings.f_find(a_symbol)) return p;
 			for (auto i = code->v_imports.rbegin(); i != code->v_imports.rend(); ++i)
 				if (auto p = (**i)->f_find(a_symbol)) return p;
-			if (!code->v_outer) throw t_error("not found");
+			if (!code->v_outer) throw t_error{L"not found"s};
 		}
 	});
 }
@@ -178,9 +189,9 @@ void t_at_expression::f_scan(gc::t_collector& a_collector)
 namespace
 {
 
-std::wostream& f_print_at_expression(t_object* a_expression)
+const t_dump& f_dump_at_expression(const t_dump& a_dump, t_object* a_expression)
 {
-	return std::wcerr << L"at expression" << std::endl << L'\t' << a_expression << std::endl;
+	return a_dump << L"at expression\n\t"sv << a_expression << L"\n"sv;
 }
 
 struct t_at_list : t_at_expression
@@ -195,28 +206,26 @@ struct t_at_list : t_at_expression
 		t_at_expression::f_scan(a_collector);
 		v_at = a_collector.f_forward(v_at);
 	}
-	void f_print_at_list(std::function<void(const t_pair*)>&& a_at_head, std::function<void(const t_pair*)>&& a_at_tail) const
+	void f_dump_at_list(const t_dump& a_dump, std::function<void(const t_pair*)>&& a_at_head, std::function<void(const t_pair*)>&& a_at_tail) const
 	{
-		f_print_at_expression(v_expression) << L'\t';
+		f_dump_at_expression(a_dump, v_expression) << L"\t"sv;
 		try {
-			lilis::f_dump(v_expression, {
-				[&](auto x)
-				{
-					for (auto c : x) std::wcerr << (std::iswspace(c) ? c : L' ');
-				}, std::move(a_at_head), std::move(a_at_tail)
-			});
+			t_dump{[&](auto x)
+			{
+				for (auto c : x) a_dump << (std::iswspace(c) ? c : L' ');
+			}, std::move(a_at_head), std::move(a_at_tail)} << v_expression;
 		} catch (nullptr_t) {
 		}
-		std::wcerr << L'^' << std::endl;
+		a_dump << L"^\n"sv;
 	}
 };
 
 struct t_at_head : t_at_list
 {
 	using t_at_list::t_at_list;
-	virtual void f_print() const
+	virtual void f_dump(const t_dump& a_dump) const
 	{
-		f_print_at_list([&](auto x)
+		f_dump_at_list(a_dump, [&](auto x)
 		{
 			if (x == v_at) throw nullptr;
 		},
@@ -229,9 +238,9 @@ struct t_at_head : t_at_list
 struct t_at_tail : t_at_list
 {
 	using t_at_list::t_at_list;
-	virtual void f_print() const
+	virtual void f_dump(const t_dump& a_dump) const
 	{
-		f_print_at_list([&](auto)
+		f_dump_at_list(a_dump, [&](auto)
 		{
 		},
 		[&](auto x)
@@ -253,9 +262,9 @@ std::shared_ptr<t_location> t_at_expression::f_at_tail(t_pair* a_pair)
 	return std::make_shared<t_at_tail>(v_engine, v_expression, a_pair);
 }
 
-void t_at_expression::f_print() const
+void t_at_expression::f_dump(const t_dump& a_dump) const
 {
-	f_print_at_expression(v_expression) << L"\t^" << std::endl;
+	f_dump_at_expression(a_dump, v_expression) << L"\t^\n"sv;
 }
 
 void t_call::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)

@@ -1,0 +1,4 @@
+caught NG
+at .*/catch\.lispo:7:10
+	  \(print \(f\)\)
+	         \^

@@ -35,12 +35,13 @@ void t_object::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 
 void t_object::f_call(t_engine& a_engine, size_t a_arguments)
 {
-	throw t_error("not callable");
+	a_engine.v_used -= a_arguments + 1;
+	throw t_error{L"not callable"s};
 }
 
 void t_object::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(L"#object"sv);
+	a_dump << L"#object"sv;
 }
 
 void t_symbol::f_scan(gc::t_collector& a_collector)
@@ -60,7 +61,7 @@ t_object* t_symbol::f_render(t_code& a_code, const std::shared_ptr<t_location>& 
 
 void t_symbol::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(v_entry->first);
+	a_dump << v_entry->first;
 }
 
 void t_pair::f_scan(gc::t_collector& a_collector)
@@ -77,26 +78,24 @@ t_object* t_pair::f_render(t_code& a_code, const std::shared_ptr<t_location>& a_
 
 void t_pair::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(L"("sv);
+	a_dump << L"("sv;
 	for (auto p = this;;) {
 		a_dump.v_head(p);
-		lilis::f_dump(p->v_head, a_dump);
+		a_dump << p->v_head;
 		if (!p->v_tail) {
 			a_dump.v_tail(p);
 			break;
 		}
 		auto tail = dynamic_cast<t_pair*>(p->v_tail);
 		if (!tail) {
-			a_dump.v_put(L" . "sv);
-			a_dump.v_tail(p);
+			(a_dump << L" . "sv).v_tail(p);
 			p->v_tail->f_dump(a_dump);
 			break;
 		}
-		a_dump.v_put(L" "sv);
-		a_dump.v_tail(p);
+		(a_dump << L" "sv).v_tail(p);
 		p = tail;
 	}
-	a_dump.v_put(L")"sv);
+	a_dump << L")"sv;
 }
 
 void t_quote::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
@@ -106,20 +105,17 @@ void t_quote::f_emit(t_emit& a_emit, size_t a_stack, bool a_tail)
 
 void t_quote::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(L"'"sv);
-	lilis::f_dump(v_value, a_dump);
+	a_dump << L"'"sv << v_value;
 }
 
 void t_unquote::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(L","sv);
-	lilis::f_dump(v_value, a_dump);
+	a_dump << L","sv << v_value;
 }
 
 void t_unquote_splicing::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(L",@"sv);
-	lilis::f_dump(v_value, a_dump);
+	a_dump << L",@"sv << v_value;
 }
 
 t_object* t_quasiquote::f_render(t_code& a_code, const std::shared_ptr<t_location>& a_location)
@@ -129,8 +125,7 @@ t_object* t_quasiquote::f_render(t_code& a_code, const std::shared_ptr<t_locatio
 
 void t_quasiquote::f_dump(const t_dump& a_dump) const
 {
-	a_dump.v_put(L"`"sv);
-	lilis::f_dump(v_value, a_dump);
+	a_dump << L"`"sv << v_value;
 }
 
 }
