@@ -7,7 +7,7 @@ It has a minimal set of features:
 * Symbols
 * Pairs
 * Quotes
-* Quasi quates
+* Quasi quotes
 * Lambda closures
 * Static scoping
 * Tail calls
