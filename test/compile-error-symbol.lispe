@@ -1,4 +1,4 @@
 caught: must be .*symbol.*
-at .*/compile-error-symbol\.lispo:1:9
+at .*/compile-error-symbol\.lisp:1:9
 	\(define \(f\) 'x\)
 	        \^

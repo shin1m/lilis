@@ -1,4 +1,4 @@
 caught: not found
-at .*/compile-error-export\.lispo:1:9
+at .*/compile-error-export\.lisp:1:9
 	\(export f\)
 	        \^

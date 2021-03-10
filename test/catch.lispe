@@ -1,4 +1,4 @@
 caught NG
-at .*/catch\.lispo:7:10
+at .*/catch\.lisp:7:10
 	  \(print \(f\)\)
 	         \^

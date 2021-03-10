@@ -1,10 +1,10 @@
 caught: must be .*pair.*
-at .*/runtime-error\.lispo:2:9
+at .*/runtime-error\.lisp:2:9
 	  \(cons \(car x\) y\)
 	        \^
-at .*/runtime-error\.lispo:5:10
+at .*/runtime-error\.lisp:5:10
 	  \(print \(foo x y\)\)
 	         \^
-at .*/runtime-error\.lispo:7:8
+at .*/runtime-error\.lisp:7:8
 	\(print \(bar 'foo \(\)\)\)
 	       \^

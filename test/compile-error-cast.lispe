@@ -1,4 +1,4 @@
 caught: must be .*pair.*
-at .*/compile-error-cast\.lispo:1:10
+at .*/compile-error-cast\.lisp:1:10
 	\(define f\)
 	         \^

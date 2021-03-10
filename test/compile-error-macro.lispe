@@ -2,6 +2,6 @@ caught: not found
 at expression
 	\(conz 'hello '\(world\)\)
 	 \^
-at .*/compile-error-macro\.lispo:4:8
+at .*/compile-error-macro\.lisp:4:8
 	\(print \(m 'hello\)\)
 	       \^

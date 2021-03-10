@@ -2,6 +2,6 @@ caught: not found
 at .*/bad-macro\.lisp:1:7
 	\(cons hello world\)
 	      \^
-at .*/compile-error-import\.lispo:1:9
+at .*/compile-error-import\.lisp:1:9
 	\(import bad-macro\)
 	        \^

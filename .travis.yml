@@ -1,18 +1,21 @@
-dist: xenial
+dist: focal
 language: cpp
 addons:
   apt:
     sources:
       - ubuntu-toolchain-r-test
     packages:
-      - g++-8
+      - g++-10
 env:
-  - CONFIGURE_OPTION='--enable-debug CXX=g++-8'
-  - CONFIGURE_OPTION='CXX=g++-8'
+  global:
+    - CXX=g++-10
+  jobs:
+    - CONFIGURATION=Debug
+    - CONFIGURATION=Release
 before_script:
-  - autoreconf -is
-  - ./configure $CONFIGURE_OPTION
-  - make
+  - cmake -E make_directory build
+  - cd build
+  - cmake -DCMAKE_BUILD_TYPE=$CONFIGURATION ..
+  - cmake --build .
 script:
-  - make check
-  - cat test/*.log
+  - ctest --verbose

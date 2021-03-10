@@ -16,7 +16,6 @@ It has a minimal set of features:
 * Delimited continuations
 * Not implemented yet: integers, floats, strings
 
-
 ## Builtins
 
 ### (lambda ARGUMENTS EXPRESSIONS)
@@ -170,25 +169,19 @@ Extracts call stack of `continuation` and append them to `error` as backtrace.
 So system errors can be handled by `(call-with-prompt catch ...)`.
 Returns `error`.
 
+## How to Build and Run Tests
 
-## How to Build
-
-    autoreconf -is
-    ./configure
-    make
-    make install
-
-
-## How to Run Tests
-
-    make check
-
+    mkdir build
+    cd build
+    cmake ..
+    cmake --build.
+    ctest
 
 ## License
 
 The MIT License (MIT)
 
-Copyright (c) 2018-2019 Shin-ichi MORITA
+Copyright (c) 2018-2021 Shin-ichi MORITA
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
