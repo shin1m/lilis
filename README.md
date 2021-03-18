@@ -1,4 +1,4 @@
-# lilis [![Build Status](https://travis-ci.org/shin1m/lilis.svg?branch=master)](https://travis-ci.org/shin1m/lilis)
+# lilis
 
 lilis is a LIttle LISp interpreter.
 This is a kind of etude for myself to learn lisp concepts and how to implement them.
