@@ -8,7 +8,7 @@ namespace lilis
 void t_engine::f_scan(gc::t_collector& a_collector)
 {
 	for (auto p = v_stack.get(); p != v_used; ++p) *p = f_forward(*p);
-	for (auto p = v_frame; p != v_frames.get() + V_FRAMES; ++p) p->f_scan(*this);
+	for (auto p = v_frame; p != v_frames.get() + c_FRAMES; ++p) p->f_scan(*this);
 	v_global = f_forward(v_global);
 }
 
@@ -61,7 +61,7 @@ void t_engine::f_run(t_code* a_code, t_object* a_arguments)
 				last = pair->v_tail;
 				++a_arguments;
 				if (!last) break;
-				if (v_used >= v_stack.get() + V_STACK) throw t_error{L"stack overflow"s};
+				if (v_used >= v_stack.get() + c_STACK) throw t_error{L"stack overflow"s};
 			}
 		return a_arguments;
 	};

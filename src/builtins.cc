@@ -471,7 +471,7 @@ namespace prompt
 			a_engine.v_used -= a_arguments + 1;
 			if (a_arguments != 1) throw t_error{L"requires OBJECT"s};
 			auto used = a_engine.v_used;
-			if (used + v_stack > a_engine.v_stack.get() + t_engine::V_STACK || a_engine.v_frame - v_frames < a_engine.v_frames.get()) throw t_error{L"stack overflow"s};
+			if (used + v_stack > a_engine.v_stack.get() + t_engine::c_STACK || a_engine.v_frame - v_frames < a_engine.v_frames.get()) throw t_error{L"stack overflow"s};
 			auto value = used[1];
 			auto p = reinterpret_cast<t_object**>(this + 1);
 			a_engine.v_used = std::copy_n(p, v_stack, used);
@@ -512,7 +512,7 @@ namespace prompt
 				if (a_arguments < 1) throw t_error{L"requires TAG [OBJECT...]"s};
 				auto frame = a_engine.v_frame;
 				while (!dynamic_cast<t_call*>(frame->v_stack[0]) || frame->v_stack[1] != tail[1])
-					if (++frame == a_engine.v_frames.get() + t_engine::V_FRAMES)
+					if (++frame == a_engine.v_frames.get() + t_engine::c_FRAMES)
 						throw t_error{L"no matching prompt found"s};
 				auto head = frame->v_stack;
 				auto stack = tail - head;

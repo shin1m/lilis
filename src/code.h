@@ -172,7 +172,7 @@ struct t_code
 					tail = scope->f_locals()[v_arguments] = v_engine.f_new<t_pair>(v_engine.v_used[-1], tail);
 			}
 			v_engine.v_used = used--;
-			if (used + v_stack > v_engine.v_stack.get() + t_engine::V_STACK || v_engine.v_frame <= v_engine.v_frames.get()) throw t_error{L"stack overflow"s};
+			if (used + v_stack > v_engine.v_stack.get() + t_engine::c_STACK || v_engine.v_frame <= v_engine.v_frames.get()) throw t_error{L"stack overflow"s};
 			--v_engine.v_frame;
 			v_engine.v_frame->v_stack = used;
 			v_engine.v_frame->v_code = v_this;

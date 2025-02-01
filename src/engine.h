@@ -54,13 +54,13 @@ struct t_frame
 
 struct t_engine : gc::t_collector
 {
-	static constexpr size_t V_STACK = 1024;
-	static constexpr size_t V_FRAMES = 256;
+	static constexpr size_t c_STACK = 1024;
+	static constexpr size_t c_FRAMES = 256;
 
-	std::unique_ptr<t_object*[]> v_stack{new t_object*[V_STACK]};
-	std::unique_ptr<t_frame[]> v_frames{new t_frame[V_FRAMES]};
+	std::unique_ptr<t_object*[]> v_stack{new t_object*[c_STACK]};
+	std::unique_ptr<t_frame[]> v_frames{new t_frame[c_FRAMES]};
 	t_object** v_used = v_stack.get();
-	t_frame* v_frame = v_frames.get() + V_FRAMES;
+	t_frame* v_frame = v_frames.get() + c_FRAMES;
 	std::map<std::wstring, t_symbol*, std::less<>> v_symbols;
 	t_holder<t_module>* v_global = nullptr;
 	std::map<std::wstring, t_holder<t_module>*, std::less<>> v_modules;
