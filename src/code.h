@@ -362,7 +362,7 @@ struct t_emit
 	}
 	void f_at(const std::shared_ptr<t_location>& a_location)
 	{
-		v_code->v_locations.push_back({v_code->v_instructions.size(), a_location});
+		v_code->v_locations.emplace_back(v_code->v_instructions.size(), a_location);
 	}
 };
 

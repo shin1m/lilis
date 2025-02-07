@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <iostream>
 #include <memory>
-#include <stdexcept>
+#include <cassert>
 
 namespace lilis::gc
 {
@@ -13,10 +13,7 @@ struct t_collector;
 
 struct t_object
 {
-	virtual size_t f_size() const
-	{
-		throw std::runtime_error("invalid");
-	}
+	virtual size_t f_size() const = 0;
 	virtual t_object* f_forward(t_collector& a_collector) = 0;
 	virtual void f_scan(t_collector& a_collector)
 	{
@@ -77,14 +74,13 @@ struct t_collector : t_root
 	struct t_forward : t_object
 	{
 		t_object* v_moved;
-		size_t v_size;
 
-		t_forward(t_object* a_moved, size_t a_size) : v_moved(a_moved), v_size(a_size)
+		t_forward(t_object* a_moved) : v_moved(a_moved)
 		{
 		}
 		virtual size_t f_size() const
 		{
-			return v_size;
+			return v_moved->f_size();
 		}
 		virtual t_object* f_forward(t_collector& a_collector)
 		{
@@ -107,9 +103,11 @@ struct t_collector : t_root
 	T* f_move(T* a_p)
 	{
 		size_t n = a_p->f_size();
+		assert(n >= sizeof(t_forward));
+		assert(n % alignof(t_object) == 0);
 		auto p = v_tail;
 		v_tail = std::copy_n(reinterpret_cast<char*>(a_p), n, p);
-		new(a_p) t_forward(reinterpret_cast<t_object*>(p), n);
+		new(a_p) t_forward(reinterpret_cast<t_object*>(p));
 		return reinterpret_cast<T*>(p);
 	}
 	template<typename T>
@@ -134,7 +132,8 @@ struct t_collector : t_root
 	}
 	char* f_allocate(size_t a_n)
 	{
-		if (a_n < sizeof(t_forward)) a_n = sizeof(t_forward);
+		assert(a_n >= sizeof(t_forward));
+		assert(a_n % alignof(t_object) == 0);
 		auto p = v_head;
 		v_head += a_n;
 		if (v_head > v_tail || v_debug) {
@@ -163,7 +162,7 @@ struct t_collector : t_root
 	template<typename T, typename... T_an>
 	T* f_new(T_an&&... a_an)
 	{
-		auto p = f_allocate(sizeof(T));
+		auto p = f_allocate(std::max(sizeof(T), sizeof(t_forward)));
 		return new(p) T(std::forward<T_an>(a_an)...);
 	}
 	template<typename T>

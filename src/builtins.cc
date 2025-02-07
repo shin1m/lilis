@@ -10,6 +10,10 @@ namespace
 
 struct t_static : t_object
 {
+	virtual size_t f_size() const
+	{
+		throw std::runtime_error("invalid");
+	}
 	virtual t_object* f_forward(gc::t_collector& a_collector)
 	{
 		return this;
